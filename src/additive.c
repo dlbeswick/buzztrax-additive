@@ -7,10 +7,11 @@
 #include "libbuzztrax-gst/musicenums.h"
 #include "libbuzztrax-gst/propertymeta.h"
 #include "libbuzztrax-gst/toneconversion.h"
-#include <stdio.h>
 #include <fcntl.h>
 #include <math.h>
+#include <stdio.h>
 #include <unistd.h>
+#include "sse_mathfun.h"
 
 GType gstbt_additive_get_type(void);
 #define GSTBT_ADDITIVE(obj) (G_TYPE_CHECK_INSTANCE_CAST((obj),gstbt_additive_get_type(),GstBtAdditive))
@@ -18,9 +19,14 @@ GType gstbt_additive_get_type(void);
 #define GST_MACHINE_NAME "additive"
 #define GST_MACHINE_DESC "Controller for real Alpha Juno synth via MIDI"
 
-#define G_FPI (gfloat)G_PI
-
 GST_DEBUG_CATEGORY (additive_debug);
+
+const float FPI = (gfloat)G_PI;
+const float F2PI = (gfloat)(2*G_PI);
+
+// libmvec
+// https://stackoverflow.com/questions/40475140/mathematical-functions-for-simd-registers
+v4sf _ZGVbN4vv_powf(v4sf x, v4sf y);
 
 enum {
   MAX_VOICES = 6,
@@ -28,8 +34,8 @@ enum {
 };
 
 typedef struct {
-  gfloat accum;
-  gfloat accum_rm;
+  gfloat accum_rads;
+  gfloat accum_rm_rads;
 } StateOvertone;
 
 typedef struct
@@ -58,7 +64,7 @@ typedef struct
   GstBtNote note;
 
   gfloat ringmod_ot_offset_calc;
-  gdouble accum;
+  gfloat accum_rads;
   GstBtToneConversion* tones;
   gfloat* buf;
   StateOvertone* states_overtone;
@@ -174,7 +180,11 @@ static void _set_property (GObject * object, guint prop_id, const GValue * value
 	break;
   case PROP_RINGMOD_OT_OFFSET:
 	self->ringmod_ot_offset = g_value_get_float(value);
-	self->ringmod_ot_offset_calc = self->ringmod_ot_offset * 2 * G_FPI;
+	self->ringmod_ot_offset_calc = self->ringmod_ot_offset * F2PI;
+	for (int i = 0; i < MAX_OVERTONES; ++i) {
+	  self->states_overtone[i].accum_rads = self->ringmod_ot_offset_calc;
+	  self->states_overtone[i].accum_rm_rads = self->ringmod_ot_offset_calc;
+	}
 	break;
   case PROP_BEND:
 	self->bend = g_value_get_float(value);
@@ -243,32 +253,58 @@ static void _get_property (GObject * object, guint prop_id, GValue * value, GPar
   }
 }
 
-static inline gfloat sin01(gfloat x) {
+static inline gfloat sin01(const gfloat x) {
   return (1.0f + sinf(x)) * 0.5f;
 }
 
-static inline gfloat powsin(gfloat x, gfloat exp) {
+static inline gfloat powsin(const gfloat x, const gfloat exp) {
   return powf(sin01(x), exp) - 0.5f;
 }
 
+static inline v4sf sin01_ps(const v4sf x) {
+  return (1.0f + sin_ps(x)) * 0.5f;
+}
+
+static inline v4sf powsin_ps(const v4sf x, const v4sf vexp) {
+  // tbd: inline
+  return _ZGVbN4vv_powf(sin01_ps(x), vexp) - 0.5f;
+}
+
+#if 0
+static gfloat flcm(const gfloat a, const gfloat b) {
+  gfloat i = MAX(a,b);
+  for (gfloat x = i; x < FLT_MAX; x += i) {
+	if (roundf(x / a) - (x / a) < 0.000001f && roundf(x / b) - (x / b) < 0.000001f)
+	  return x;
+	else
+	  x += i;
+  }
+  return INFINITY;
+}
+#endif
+
 static gboolean _process (GstBtAudioSynth* synth, GstBuffer* gstbuf, GstMapInfo* info) {
   GstBtAdditive * const self = GSTBT_ADDITIVE(synth);
+  const gfloat rate = (gfloat)GSTBT_AUDIO_SYNTH(self)->info.rate;
   
   /*  for (int i = 0; i < self->cntVoices; ++i) {
 	gstbt_additivev_process(self->voices[i], gstbuf);
 	}*/
 
   gfloat* const buf = self->buf;
+  v4sf* const buff = (v4sf*)self->buf;
+  const int nbufelements = synth->generate_samples_per_buffer;
+  const int nbuffelements = synth->generate_samples_per_buffer/4;
   
-  memset(buf, 0, synth->generate_samples_per_buffer*sizeof(gfloat));
-  
+  memset(buf, 0, nbufelements*sizeof(gfloat));
+
   if (self->note != GSTBT_NOTE_OFF) {
-	const gfloat rate = (gfloat)GSTBT_AUDIO_SYNTH(self)->info.rate;
-	const gfloat freq = (gfloat)gstbt_tone_conversion_translate_from_number(self->tones, self->note);
+	const gfloat freq_note = (gfloat)gstbt_tone_conversion_translate_from_number(self->tones, self->note);
+	const gfloat freq = freq_note + freq_note * self->bend;
 
 	const gfloat freq_top =
 	  freq * self->ampfreq_scale_idx_mul * (1+(gfloat)self->overtones) + self->ampfreq_scale_offset;
-	
+
 	gint max_overtones;
 	if (freq_top > rate/2) {
 	  max_overtones = (gint)((rate/2 - self->ampfreq_scale_offset) / freq / self->ampfreq_scale_idx_mul - 1);
@@ -277,49 +313,72 @@ static gboolean _process (GstBtAudioSynth* synth, GstBuffer* gstbuf, GstMapInfo*
 	}
 	
 	for (int j = self->sum_start_idx, idx_o = 0; j != self->sum_start_idx + 1 + max_overtones; ++j, ++idx_o) {
-	  const gdouble hscale_freq = self->ampfreq_scale_idx_mul * (gfloat)j + self->ampfreq_scale_offset;
+	  const gfloat hscale_freq = self->ampfreq_scale_idx_mul * (gfloat)j + self->ampfreq_scale_offset;
 	  if (hscale_freq <= 0)
 		continue;
+	  g_assert(idx_o < MAX_OVERTONES);
 
 	  StateOvertone* const overtone = &self->states_overtone[idx_o];
-	  
+	
 	  const gfloat hscale_amp =
 		powf(self->amp_pow_base, (gfloat)j * self->amp_exp_idx_mul) *
 		powf(hscale_freq, self->ampfreq_scale_exp);
-	  
-	  const gdouble inc = 2.0 * G_PI * (1.0/rate) * freq * hscale_freq;
+
+	  const gfloat time_to_rads = F2PI * freq * hscale_freq;
+	  const gfloat inc = time_to_rads * (1.0f/rate);
 	  
 	  if (self->ringmod_depth > 0) {
-		const gdouble inc_rm = inc * self->ringmod_depth;
-		
-		for (int i = 0; i < synth->generate_samples_per_buffer; ++i) {
-		  buf[i] +=
-			hscale_amp * (
-			  sinf(overtone->accum) *
-			  powsin(overtone->accum_rm, self->ringmod_rate)
-//			  powsin(hscale_freq * freq * self->ringmod_depth * (t + self->ringmod_ot_offset_calc), self->ringmod_rate)
-			);
-		  overtone->accum += inc;
-		  overtone->accum_rm += inc_rm;
-		}
-	  } else {
-		for (int i = 0; i < synth->generate_samples_per_buffer; ++i) {
-		  buf[i] += hscale_amp * sinf(overtone->accum);
-		  overtone->accum += inc;
-		}
-	  }
-	  
-	  overtone->accum = fmod(overtone->accum, 2 * G_PI);
-	  overtone->accum_rm = fmod(overtone->accum_rm, 2 * G_PI);
-	}
+		const gfloat inc_rm = time_to_rads * self->ringmod_depth * (1.0f/rate);
 
-	//self->accum = fmod(self->accum + (2.0 * G_PI * (1.0/rate)) * synth->generate_samples_per_buffer, 2 * G_PI);
+#if 0
+		for (int i = 0; i < nbufelements; ++i) {
+		  buf[i] += hscale_amp *
+			sinf(overtone->accum_rads + inc * i) *
+			powsin(overtone->accum_rm_rads + inc_rm * i, self->ringmod_rate)
+			;
+		}
+		overtone->accum_rads += inc * nbufelements;
+		/overtone->accum_rm_rads += inc_rm * nbufelements;
+#else
+		const gfloat inc4 = inc * 4;
+		const gfloat inc_rm4 = inc_rm * 4;
+		const v4sf f = {inc, inc * 2, inc * 3, inc * 4};
+		const v4sf f_rm = {inc_rm, inc_rm * 2, inc_rm * 3, inc_rm * 4};
+		const v4sf v_exp = {self->ringmod_rate, self->ringmod_rate, self->ringmod_rate, self->ringmod_rate};
+		for (int i = 0; i < nbuffelements; ++i) {
+		  buff[i] += hscale_amp *
+			sin_ps(overtone->accum_rads + f) *
+			powsin_ps(overtone->accum_rm_rads + f_rm, v_exp)
+			;
+		  overtone->accum_rads += inc4;
+		  overtone->accum_rm_rads += inc_rm4;
+		}
+#endif
+		overtone->accum_rm_rads = fmodf(overtone->accum_rm_rads, F2PI);
+	  } else {
+#if 0
+		for (int i = 0; i < nbufelements; ++i) {
+		  buf[i] += hscale_amp * sinf(overtone->accum_rads + inc * i);
+		}
+		overtone->accum_rads += inc * nbufelements;
+#else
+		const gfloat inc4 = inc * 4;
+		const v4sf f = {inc, inc * 2, inc * 3, inc * 4};
+		for (int i = 0; i < nbuffelements; ++i) {
+		  const v4sf ff = f + overtone->accum_rads;
+		  buff[i] += hscale_amp * sin_ps(ff);
+		  overtone->accum_rads += inc4;
+		}
+#endif
+	  }
+	  overtone->accum_rads = fmodf(overtone->accum_rads, F2PI);
+	}
   }
 
-  const float fscale = 32768.0f * self->vol;
-  gint16* const out = (gint16*)info->data;
-  for (int i = 0; i < synth->generate_samples_per_buffer; ++i)
-	out[i] = (gint16)(buf[i] * fscale);
+  const gfloat fscale = 32768.0f * self->vol;
+  guint16* const out = (guint16*)info->data;
+  for (int i = 0; i < nbufelements; ++i)
+	out[i] = buf[i] * fscale;
   
   return TRUE;
 }
@@ -337,7 +396,7 @@ static void _negotiate (GstBtAudioSynth* base, GstCaps* caps) {
 static void _dispose (GObject* object) {
   GstBtAdditive* self = GSTBT_ADDITIVE(object);
   g_clear_object(&self->tones);
-  g_clear_pointer(&self->buf, g_free);
+  g_clear_pointer(&self->buf, free);
   g_free(self->states_overtone);
   
   // It's necessary to unparent children so they will be unreffed and cleaned up. GstObject doesn't hold variable

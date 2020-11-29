@@ -1,7 +1,8 @@
 AC_PREREQ(2.69)
 AC_INIT([additive],[1],[dlbeswick@gmail.com])
 
-: ${CFLAGS="-g"} # -O2 -g will always be added by AC_PROG_CC (or some other call?) without this line
+# -O2 -g will always be added by AC_PROG_CC (or some other call?) without this line
+: ${CFLAGS="-g"}
 
 AC_CONFIG_SRCDIR([src/additive.c])
 AM_INIT_AUTOMAKE([-Wall -Werror 1.16.1 foreign subdir-objects])
@@ -53,7 +54,7 @@ if test "$enable_debug" = "yes"; then
 	AC_DEFINE(USE_DEBUG, [1], [enable runtime debugging code])
 	OPTIMIZE_CFLAGS="-Og"
 else
-	OPTIMIZE_CFLAGS="-O3"
+	OPTIMIZE_CFLAGS="-O2 -ffast-math -ftree-loop-vectorize -lm"
 fi
 AC_SUBST(OPTIMIZE_CFLAGS)
 

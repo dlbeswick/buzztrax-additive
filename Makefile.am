@@ -10,7 +10,7 @@ plugin_LTLIBRARIES = libadditive.la
 
 libadditive_la_SOURCES = $(SRC)
 libadditive_la_CFLAGS = $(PKGCONFIG_DEPS_CFLAGS) $(OPTIMIZE_CFLAGS) \
-	-std=c99 -Werror -Wno-error=unused-variable -pedantic -Wall -Wshadow -Wpointer-arith -Wstrict-prototypes \
+	-std=gnu99 -Werror -Wno-error=unused-variable -pedantic -Wall -Wshadow -Wpointer-arith -Wstrict-prototypes \
 	-fvisibility=hidden
 libadditive_la_LDFLAGS = $(PKGCONFIG_DEPS_LIBS) -module -avoid-version
 
