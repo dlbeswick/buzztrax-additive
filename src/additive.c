@@ -2,6 +2,9 @@
 //#include "src/genums.h"
 //#include "src/generated/generated-genums.h"
 
+#include "envelope.h"
+#include "sse_mathfun.h"
+
 #include "libbuzztrax-gst/audiosynth.h"
 #include "libbuzztrax-gst/childbin.h"
 #include "libbuzztrax-gst/musicenums.h"
@@ -13,18 +16,17 @@
 #include <math.h>
 #include <stdio.h>
 #include <unistd.h>
-#include "sse_mathfun.h"
 
 GType gstbt_additive_get_type(void);
 #define GSTBT_ADDITIVE(obj) (G_TYPE_CHECK_INSTANCE_CAST((obj),gstbt_additive_get_type(),GstBtAdditive))
 
 #define GST_MACHINE_NAME "additive"
-#define GST_MACHINE_DESC "Controller for real Alpha Juno synth via MIDI"
+#define GST_MACHINE_DESC "Additive synthesis via many sines"
 
 #define GST_CAT_DEFAULT additive_debug
 GST_DEBUG_CATEGORY_STATIC(GST_CAT_DEFAULT);
 
-typedef gdouble v4sd __attribute__ ((vector_size (16)));
+typedef gdouble v4sd __attribute__ ((vector_size (32)));
 typedef gint v4si __attribute__ ((vector_size (16)));
 typedef guint v4ui __attribute__ ((vector_size (16)));
 typedef gint16 v4ss __attribute__ ((vector_size (8)));
@@ -81,8 +83,7 @@ typedef struct
   gfloat* buf;
   gdouble* buf_srate;
   StateOvertone* states_overtone;
-  GstTimedValueControlSource* cs;
-  GstControlBinding* cb;
+  GstBtAdsr* adsr;
   GstClockTime running_time_last;
 
   gint calls;
@@ -170,27 +171,12 @@ static void _set_property (GObject * object, guint prop_id, const GValue * value
 
   switch (prop_id) {
   case PROP_NOTE: {
-	gdouble base = 0.0;
-	gst_control_source_get_value((GstControlSource*)self->cs, self->parent.running_time, &base);
-	
 	GstBtNote note = g_value_get_enum(value);
 	if (note == GSTBT_NOTE_OFF) {
-	  gst_timed_value_control_source_unset_all(self->cs);
-	  gst_timed_value_control_source_set(self->cs, self->parent.running_time, base);
-	  gst_timed_value_control_source_set(self->cs, self->parent.running_time + self->decay * GST_SECOND, 0.0);
+	  gstbt_adsr_off(self->adsr, self->parent.running_time);
 	} else if (note != GSTBT_NOTE_NONE) {
 	  self->note = note;
-	  
-	  const gdouble noclick = base * 0.05;
-	  
-	  gst_timed_value_control_source_unset_all(self->cs);
-	  gst_timed_value_control_source_set(self->cs, self->parent.running_time, base);
-	  gst_timed_value_control_source_set(
-		self->cs, self->parent.running_time + noclick * GST_SECOND, 0.0);
-	  gst_timed_value_control_source_set(
-		self->cs, self->parent.running_time + (noclick + self->attack) * GST_SECOND, 1.0);
-	  gst_timed_value_control_source_set(
-		self->cs, self->parent.running_time + (noclick + self->attack + self->decay) * GST_SECOND, 0.0);
+	  gstbt_adsr_trigger(self->adsr, self->parent.running_time);
 	}
 	break;
   }
@@ -439,7 +425,7 @@ static gboolean _process (GstBtAudioSynth* synth, GstBuffer* gstbuf, GstMapInfo*
   }
 
   gst_control_source_get_value_array(
-	(GstControlSource*)self->cs,
+	(GstControlSource*)self->adsr,
 	synth->running_time,
 	1e9L / synth->info.rate,
 	nbufelements,
@@ -473,8 +459,7 @@ static void _negotiate (GstBtAudioSynth* base, GstCaps* caps) {
 static void _dispose (GObject* object) {
   GstBtAdditive* self = GSTBT_ADDITIVE(object);
   g_clear_object(&self->tones);
-  g_clear_object(&self->cs);
-  g_clear_object(&self->cb);
+  g_clear_object(&self->adsr);
   g_clear_pointer(&self->buf, free);
   g_clear_pointer(&self->buf_srate, free);
   g_free(self->states_overtone);
@@ -574,15 +559,8 @@ static void gstbt_additive_init (GstBtAdditive* const self) {
 
   self->states_overtone = g_malloc(sizeof(StateOvertone) * MAX_OVERTONES);
 
-  self->cs = g_object_new(GST_TYPE_INTERPOLATION_CONTROL_SOURCE,
-						  "mode", GST_INTERPOLATION_MODE_CUBIC_MONOTONIC,
-						  NULL);
+  self->adsr = g_object_new(gstbt_adsr_get_type(), NULL);
 
-  self->cb = (GstControlBinding*)gst_direct_control_binding_new(
-	(GstObject*)self,
-	properties[PROP_VOL]->name,
-	(GstControlSource*)self->cs);
-  
   /*
   
   for (int i = 0; i < MAX_VOICES; i++) {
