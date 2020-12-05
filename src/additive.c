@@ -7,6 +7,8 @@
 #include "libbuzztrax-gst/musicenums.h"
 #include "libbuzztrax-gst/propertymeta.h"
 #include "libbuzztrax-gst/toneconversion.h"
+#include <gst/controller/gstinterpolationcontrolsource.h>
+#include <gst/controller/gstdirectcontrolbinding.h>
 #include <fcntl.h>
 #include <math.h>
 #include <stdio.h>
@@ -19,10 +21,18 @@ GType gstbt_additive_get_type(void);
 #define GST_MACHINE_NAME "additive"
 #define GST_MACHINE_DESC "Controller for real Alpha Juno synth via MIDI"
 
-GST_DEBUG_CATEGORY (additive_debug);
+#define GST_CAT_DEFAULT additive_debug
+GST_DEBUG_CATEGORY_STATIC(GST_CAT_DEFAULT);
+
+typedef gdouble v4sd __attribute__ ((vector_size (16)));
+typedef gint v4si __attribute__ ((vector_size (16)));
+typedef guint v4ui __attribute__ ((vector_size (16)));
+typedef gint16 v4ss __attribute__ ((vector_size (8)));
 
 const float FPI = (gfloat)G_PI;
 const float F2PI = (gfloat)(2*G_PI);
+
+static gfloat lut_sin[1024];
 
 // libmvec
 // https://stackoverflow.com/questions/40475140/mathematical-functions-for-simd-registers
@@ -61,13 +71,22 @@ typedef struct
   gfloat ringmod_depth;
   gfloat ringmod_ot_offset;
   gfloat vol;
+  gfloat attack;
+  gfloat decay;
   GstBtNote note;
 
   gfloat ringmod_ot_offset_calc;
   gfloat accum_rads;
   GstBtToneConversion* tones;
   gfloat* buf;
+  gdouble* buf_srate;
   StateOvertone* states_overtone;
+  GstTimedValueControlSource* cs;
+  GstControlBinding* cb;
+  GstClockTime running_time_last;
+
+  gint calls;
+  long time_accum;
 } GstBtAdditive;
 
 enum
@@ -86,6 +105,8 @@ enum
   PROP_BEND,
   PROP_VOL,
   PROP_NOTE,
+  PROP_ATTACK,
+  PROP_DECAY,
   N_PROPERTIES
 };
 static GParamSpec *properties[N_PROPERTIES] = { NULL, };
@@ -125,7 +146,7 @@ G_DEFINE_TYPE_WITH_CODE (
 static gboolean plugin_init(GstPlugin * plugin) {
   GST_DEBUG_CATEGORY_INIT(
 	GST_CAT_DEFAULT,
-	GST_MACHINE_NAME,
+	G_STRINGIFY(GST_CAT_DEFAULT),
 	GST_DEBUG_FG_WHITE | GST_DEBUG_BG_BLACK,
 	GST_MACHINE_DESC);
 
@@ -148,6 +169,31 @@ static void _set_property (GObject * object, guint prop_id, const GValue * value
   GstBtAdditive *self = GSTBT_ADDITIVE (object);
 
   switch (prop_id) {
+  case PROP_NOTE: {
+	gdouble base = 0.0;
+	gst_control_source_get_value((GstControlSource*)self->cs, self->parent.running_time, &base);
+	
+	GstBtNote note = g_value_get_enum(value);
+	if (note == GSTBT_NOTE_OFF) {
+	  gst_timed_value_control_source_unset_all(self->cs);
+	  gst_timed_value_control_source_set(self->cs, self->parent.running_time, base);
+	  gst_timed_value_control_source_set(self->cs, self->parent.running_time + self->decay * GST_SECOND, 0.0);
+	} else if (note != GSTBT_NOTE_NONE) {
+	  self->note = note;
+	  
+	  const gdouble noclick = base * 0.05;
+	  
+	  gst_timed_value_control_source_unset_all(self->cs);
+	  gst_timed_value_control_source_set(self->cs, self->parent.running_time, base);
+	  gst_timed_value_control_source_set(
+		self->cs, self->parent.running_time + noclick * GST_SECOND, 0.0);
+	  gst_timed_value_control_source_set(
+		self->cs, self->parent.running_time + (noclick + self->attack) * GST_SECOND, 1.0);
+	  gst_timed_value_control_source_set(
+		self->cs, self->parent.running_time + (noclick + self->attack + self->decay) * GST_SECOND, 0.0);
+	}
+	break;
+  }
   case PROP_CHILDREN:
 	//self->cntVoices = g_value_get_ulong(value);
 	break;
@@ -192,12 +238,12 @@ static void _set_property (GObject * object, guint prop_id, const GValue * value
   case PROP_VOL:
 	self->vol = g_value_get_float(value);
 	break;
-  case PROP_NOTE: {
-	GstBtNote note = g_value_get_enum(value);
-	if (note != GSTBT_NOTE_NONE)
-		self->note = note;
+  case PROP_ATTACK:
+	self->attack = g_value_get_float(value);
 	break;
-  }
+  case PROP_DECAY:
+	self->decay = g_value_get_float(value);
+	break;
   default:
 	G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
 	break;
@@ -247,27 +293,61 @@ static void _get_property (GObject * object, guint prop_id, GValue * value, GPar
   case PROP_VOL:
 	g_value_set_float(value, self->vol);
 	break;
+  case PROP_ATTACK:
+	g_value_set_float(value, self->attack);
+	break;
+  case PROP_DECAY:
+	g_value_set_float(value, self->decay);
+	break;
   default:
 	G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
 	break;
   }
 }
 
-static inline gfloat sin01(const gfloat x) {
-  return (1.0f + sinf(x)) * 0.5f;
+static inline v4sf lerp_ps(const v4sf a, const v4sf b, const v4sf alpha) {
+  return a + (b-a) * alpha;
 }
 
-static inline gfloat powsin(const gfloat x, const gfloat exp) {
-  return powf(sin01(x), exp) - 0.5f;
+// Domain: [0, 683565275.5764316]
+// No performance benefit was recorded compared to fast sin.
+// LUT size doesn't seem to affect performance.
+static inline v4sf sin_ps_lut(const v4sf x) {
+  const gfloat* const lut = (const gfloat*)lut_sin;
+  const v4sf x_scale = x/F2PI * (sizeof(lut_sin) / sizeof(gfloat));
+  const v4ui whole = __builtin_convertvector(x_scale, v4ui);
+  const v4sf frac = x_scale - __builtin_convertvector(whole, v4sf);
+  const v4ui idxa = whole & ((sizeof(lut_sin) / sizeof(gfloat))-1);
+  const v4ui idxb = (idxa+1) & ((sizeof(lut_sin) / sizeof(gfloat))-1);
+  const v4sf a = {lut[idxa[0]], lut[idxa[1]], lut[idxa[2]], lut[idxa[3]]};
+  const v4sf b = {lut[idxb[0]], lut[idxb[1]], lut[idxb[2]], lut[idxb[3]]};
+
+  return a + (b-a) * frac;
 }
 
+static inline v4sf sin_ps_method(const v4sf x) {
+  return sin_ps(x);
+}
+
+// Return a sin with range 0 -> 1
 static inline v4sf sin01_ps(const v4sf x) {
-  return (1.0f + sin_ps(x)) * 0.5f;
+  return (1.0f + sin_ps_method(x)) * 0.5f;
 }
 
+static inline v4sf pow_posexp_ps(const v4sf x, const v4sf vexp) {
+  return exp_ps(vexp*log_ps(x));
+}
+
+// Take a sin with range 0 -> 1 and exponentiate to 'vexp' power
+// Return the result normalized back to -1 -> 1 range.
+// A way of waveshaping on non-odd powers, I suppose.
 static inline v4sf powsin_ps(const v4sf x, const v4sf vexp) {
-  // tbd: inline
-  return _ZGVbN4vv_powf(sin01_ps(x), vexp) - 0.5f;
+  // tbd: inline _ZGVbN4vv_powf?
+  // tbd: use loop to avoid use of _ZGVbN4vv_powf? check that it will vectorize.
+  return (_ZGVbN4vv_powf(sin01_ps(x), vexp) - 0.5f) * 2.0f;
+
+// faster, but crackling
+//  return (pow_posexp_ps(sin01_ps(x), vexp) - 0.5f) * 2.0f;
 }
 
 #if 0
@@ -284,13 +364,18 @@ static gfloat flcm(const gfloat a, const gfloat b) {
 #endif
 
 static gboolean _process (GstBtAudioSynth* synth, GstBuffer* gstbuf, GstMapInfo* info) {
+  struct timespec clock_start;
+  clock_gettime(CLOCK_THREAD_CPUTIME_ID, &clock_start);
+  
   GstBtAdditive * const self = GSTBT_ADDITIVE(synth);
   const gfloat rate = (gfloat)GSTBT_AUDIO_SYNTH(self)->info.rate;
-  
+
   /*  for (int i = 0; i < self->cntVoices; ++i) {
 	gstbt_additivev_process(self->voices[i], gstbuf);
 	}*/
 
+  self->running_time_last = synth->running_time;
+  
   gfloat* const buf = self->buf;
   v4sf* const buff = (v4sf*)self->buf;
   const int nbufelements = synth->generate_samples_per_buffer;
@@ -298,88 +383,80 @@ static gboolean _process (GstBtAudioSynth* synth, GstBuffer* gstbuf, GstMapInfo*
   
   memset(buf, 0, nbufelements*sizeof(gfloat));
 
-  if (self->note != GSTBT_NOTE_OFF) {
-	const gfloat freq_note = (gfloat)gstbt_tone_conversion_translate_from_number(self->tones, self->note);
-	const gfloat freq = freq_note + freq_note * self->bend;
+  const gfloat freq_note = (gfloat)gstbt_tone_conversion_translate_from_number(self->tones, self->note);
+  const gfloat freq = freq_note + freq_note * self->bend;
 
-	const gfloat freq_top =
-	  freq * self->ampfreq_scale_idx_mul * (1+(gfloat)self->overtones) + self->ampfreq_scale_offset;
+  const gfloat freq_top =
+	freq * self->ampfreq_scale_idx_mul * (1+(gfloat)self->overtones) + self->ampfreq_scale_offset;
 
-	gint max_overtones;
-	if (freq_top > rate/2) {
-	  max_overtones = (gint)((rate/2 - self->ampfreq_scale_offset) / freq / self->ampfreq_scale_idx_mul - 1);
-	} else {
-	  max_overtones = (gint)self->overtones;
-	}
+  gint max_overtones;
+  if (freq_top > rate/2) {
+	max_overtones = (gint)((rate/2 - self->ampfreq_scale_offset) / freq / self->ampfreq_scale_idx_mul - 1);
+  } else {
+	max_overtones = (gint)self->overtones;
+  }
 	
-	for (int j = self->sum_start_idx, idx_o = 0; j != self->sum_start_idx + 1 + max_overtones; ++j, ++idx_o) {
-	  const gfloat hscale_freq = self->ampfreq_scale_idx_mul * (gfloat)j + self->ampfreq_scale_offset;
-	  if (hscale_freq <= 0)
-		continue;
-	  g_assert(idx_o < MAX_OVERTONES);
+  for (int j = self->sum_start_idx, idx_o = 0; j != self->sum_start_idx + 1 + max_overtones; ++j, ++idx_o) {
+	const gfloat hscale_freq = self->ampfreq_scale_idx_mul * (gfloat)j + self->ampfreq_scale_offset;
+	if (hscale_freq <= 0)
+	  continue;
+	g_assert(idx_o < MAX_OVERTONES);
 
-	  StateOvertone* const overtone = &self->states_overtone[idx_o];
+	StateOvertone* const overtone = &self->states_overtone[idx_o];
 	
-	  const gfloat hscale_amp =
-		powf(self->amp_pow_base, (gfloat)j * self->amp_exp_idx_mul) *
-		powf(hscale_freq, self->ampfreq_scale_exp);
+	const gfloat hscale_amp =
+	  powf(self->amp_pow_base, (gfloat)j * self->amp_exp_idx_mul) *
+	  powf(hscale_freq, self->ampfreq_scale_exp);
 
-	  const gfloat time_to_rads = F2PI * freq * hscale_freq;
-	  const gfloat inc = time_to_rads * (1.0f/rate);
+	const gfloat time_to_rads = F2PI * freq * hscale_freq;
+	const gfloat inc = time_to_rads * (1.0f/rate);
 	  
-	  if (self->ringmod_depth > 0) {
-		const gfloat inc_rm = time_to_rads * self->ringmod_depth * (1.0f/rate);
+	if (self->ringmod_depth > 0) {
+	  const gfloat inc_rm = time_to_rads * self->ringmod_depth * (1.0f/rate);
 
-#if 0
-		for (int i = 0; i < nbufelements; ++i) {
-		  buf[i] += hscale_amp *
-			sinf(overtone->accum_rads + inc * i) *
-			powsin(overtone->accum_rm_rads + inc_rm * i, self->ringmod_rate)
-			;
-		}
-		overtone->accum_rads += inc * nbufelements;
-		/overtone->accum_rm_rads += inc_rm * nbufelements;
-#else
-		const gfloat inc4 = inc * 4;
-		const gfloat inc_rm4 = inc_rm * 4;
-		const v4sf f = {inc, inc * 2, inc * 3, inc * 4};
-		const v4sf f_rm = {inc_rm, inc_rm * 2, inc_rm * 3, inc_rm * 4};
-		const v4sf v_exp = {self->ringmod_rate, self->ringmod_rate, self->ringmod_rate, self->ringmod_rate};
-		for (int i = 0; i < nbuffelements; ++i) {
-		  buff[i] += hscale_amp *
-			sin_ps(overtone->accum_rads + f) *
-			powsin_ps(overtone->accum_rm_rads + f_rm, v_exp)
-			;
-		  overtone->accum_rads += inc4;
-		  overtone->accum_rm_rads += inc_rm4;
-		}
-#endif
-		overtone->accum_rm_rads = fmodf(overtone->accum_rm_rads, F2PI);
-	  } else {
-#if 0
-		for (int i = 0; i < nbufelements; ++i) {
-		  buf[i] += hscale_amp * sinf(overtone->accum_rads + inc * i);
-		}
-		overtone->accum_rads += inc * nbufelements;
-#else
-		const gfloat inc4 = inc * 4;
-		const v4sf f = {inc, inc * 2, inc * 3, inc * 4};
-		for (int i = 0; i < nbuffelements; ++i) {
-		  const v4sf ff = f + overtone->accum_rads;
-		  buff[i] += hscale_amp * sin_ps(ff);
-		  overtone->accum_rads += inc4;
-		}
-#endif
+	  const v4sf f = {inc, inc * 2, inc * 3, inc * 4};
+	  const v4sf f_rm = {inc_rm, inc_rm * 2, inc_rm * 3, inc_rm * 4};
+	  const v4sf v_exp = {self->ringmod_rate, self->ringmod_rate, self->ringmod_rate, self->ringmod_rate};
+	  for (int i = 0; i < nbuffelements; ++i) {
+		buff[i] += hscale_amp *
+		  sin_ps_method(overtone->accum_rads + f) *
+		  powsin_ps(overtone->accum_rm_rads + f_rm, v_exp)
+		  ;
+		overtone->accum_rads += f[3];
+		overtone->accum_rm_rads += f_rm[3];
 	  }
-	  overtone->accum_rads = fmodf(overtone->accum_rads, F2PI);
+	  overtone->accum_rm_rads = fmodf(overtone->accum_rm_rads, F2PI);
+	} else {
+	  const gfloat inc4 = inc * 4;
+	  const v4sf f = {inc, inc * 2, inc * 3, inc * 4};
+	  for (int i = 0; i < nbuffelements; ++i) {
+		const v4sf ff = f + overtone->accum_rads;
+		buff[i] += hscale_amp * sin_ps_method(ff);
+		overtone->accum_rads += inc4;
+	  }
 	}
+	overtone->accum_rads = fmodf(overtone->accum_rads, F2PI);
   }
 
-  const gfloat fscale = 32768.0f * self->vol;
-  guint16* const out = (guint16*)info->data;
-  for (int i = 0; i < nbufelements; ++i)
-	out[i] = buf[i] * fscale;
+  gst_control_source_get_value_array(
+	(GstControlSource*)self->cs,
+	synth->running_time,
+	1e9L / synth->info.rate,
+	nbufelements,
+	self->buf_srate);
   
+  const gfloat fscale = 32768.0f * self->vol;
+  for (int i = 0; i < nbufelements; ++i)
+	((guint16*)info->data)[i] = buf[i] * fscale * self->buf_srate[i];
+  
+  struct timespec clock_end;
+  clock_gettime(CLOCK_THREAD_CPUTIME_ID, &clock_end);
+  self->time_accum += (clock_end.tv_sec - clock_start.tv_sec) * 1e9L +  (clock_end.tv_nsec - clock_start.tv_nsec);
+  if (++self->calls == 250) {
+	GST_INFO("Avg perf: %f calls/sec\n", 1.0f / (self->time_accum / 1e9f / self->calls));
+	self->time_accum = 0;
+	self->calls = 0;
+  }
   return TRUE;
 }
 
@@ -396,7 +473,10 @@ static void _negotiate (GstBtAudioSynth* base, GstCaps* caps) {
 static void _dispose (GObject* object) {
   GstBtAdditive* self = GSTBT_ADDITIVE(object);
   g_clear_object(&self->tones);
+  g_clear_object(&self->cs);
+  g_clear_object(&self->cb);
   g_clear_pointer(&self->buf, free);
+  g_clear_pointer(&self->buf_srate, free);
   g_free(self->states_overtone);
   
   // It's necessary to unparent children so they will be unreffed and cleaned up. GstObject doesn't hold variable
@@ -469,6 +549,10 @@ G_DIR_SEPARATOR_S "" PACKAGE "-gst" G_DIR_SEPARATOR_S "GstBtSimSyn.html");*/
 	g_param_spec_float("bend", "Bend", "", -1, 1, 0, flags);
   properties[PROP_VOL] =
 	g_param_spec_float("vol", "vol", "", 0, 1, 0.5, flags);
+  properties[PROP_ATTACK] =
+	g_param_spec_float("attack", "attack", "", 0.0001, 30, 2, flags);
+  properties[PROP_DECAY] =
+	g_param_spec_float("decay", "decay", "", 0.0001, 30, 2, flags);
   properties[PROP_NOTE] =
 	g_param_spec_enum("note", "Note", "", GSTBT_TYPE_NOTE, GSTBT_NOTE_NONE,
 					  G_PARAM_WRITABLE | GST_PARAM_CONTROLLABLE | G_PARAM_STATIC_STRINGS);
@@ -477,14 +561,28 @@ G_DIR_SEPARATOR_S "" PACKAGE "-gst" G_DIR_SEPARATOR_S "GstBtSimSyn.html");*/
 	g_assert(properties[i]);
   
   g_object_class_install_properties (gobject_class, N_PROPERTIES, properties);
+
+  for (int i = 0; i < sizeof(lut_sin) / sizeof(gfloat); ++i) {
+	lut_sin[i] = (gfloat)sin(G_PI * 2 * ((double)i / (sizeof(lut_sin) / sizeof(gfloat))));
+  }
 }
 
 static void gstbt_additive_init (GstBtAdditive* const self) {
   self->tones = gstbt_tone_conversion_new(GSTBT_TONE_CONVERSION_EQUAL_TEMPERAMENT);
   self->buf = g_malloc(sizeof(gfloat)*self->parent.generate_samples_per_buffer);
+  self->buf_srate = g_malloc(sizeof(gdouble)*self->parent.generate_samples_per_buffer);
 
   self->states_overtone = g_malloc(sizeof(StateOvertone) * MAX_OVERTONES);
 
+  self->cs = g_object_new(GST_TYPE_INTERPOLATION_CONTROL_SOURCE,
+						  "mode", GST_INTERPOLATION_MODE_CUBIC_MONOTONIC,
+						  NULL);
+
+  self->cb = (GstControlBinding*)gst_direct_control_binding_new(
+	(GstObject*)self,
+	properties[PROP_VOL]->name,
+	(GstControlSource*)self->cs);
+  
   /*
   
   for (int i = 0; i < MAX_VOICES; i++) {
