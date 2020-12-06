@@ -1,6 +1,6 @@
 ACLOCAL_AMFLAGS = -I m4
 
-SRC = src/additive.c src/envelope.c
+SRC = src/additive.c src/envelope.c src/properties_simple.c
 #src/generated/generated-genums.c src/voice.c
 
 #BUILT_SOURCES = src/generated/generated-genums.h src/generated/generated-genums.c

@@ -73,15 +73,13 @@ typedef struct
   gfloat ringmod_depth;
   gfloat ringmod_ot_offset;
   gfloat vol;
-  gfloat attack;
-  gfloat decay;
   GstBtNote note;
 
   gfloat ringmod_ot_offset_calc;
   gfloat accum_rads;
   GstBtToneConversion* tones;
   gfloat* buf;
-  gdouble* buf_srate;
+  gfloat* buf_srate;
   StateOvertone* states_overtone;
   GstBtAdsr* adsr;
   GstClockTime running_time_last;
@@ -106,8 +104,6 @@ enum
   PROP_BEND,
   PROP_VOL,
   PROP_NOTE,
-  PROP_ATTACK,
-  PROP_DECAY,
   N_PROPERTIES
 };
 static GParamSpec *properties[N_PROPERTIES] = { NULL, };
@@ -224,14 +220,9 @@ static void _set_property (GObject * object, guint prop_id, const GValue * value
   case PROP_VOL:
 	self->vol = g_value_get_float(value);
 	break;
-  case PROP_ATTACK:
-	self->attack = g_value_get_float(value);
-	break;
-  case PROP_DECAY:
-	self->decay = g_value_get_float(value);
-	break;
   default:
-	G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
+	gst_bt_adsr_property_set((GObject*)self->adsr, prop_id, value, pspec);
+	//G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
 	break;
   }
 }
@@ -279,14 +270,9 @@ static void _get_property (GObject * object, guint prop_id, GValue * value, GPar
   case PROP_VOL:
 	g_value_set_float(value, self->vol);
 	break;
-  case PROP_ATTACK:
-	g_value_set_float(value, self->attack);
-	break;
-  case PROP_DECAY:
-	g_value_set_float(value, self->decay);
-	break;
   default:
-	G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
+	gst_bt_adsr_property_get((GObject*)self->adsr, prop_id, value, pspec);
+//	G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
 	break;
   }
 }
@@ -424,12 +410,8 @@ static gboolean _process (GstBtAudioSynth* synth, GstBuffer* gstbuf, GstMapInfo*
 	overtone->accum_rads = fmodf(overtone->accum_rads, F2PI);
   }
 
-  gst_control_source_get_value_array(
-	(GstControlSource*)self->adsr,
-	synth->running_time,
-	1e9L / synth->info.rate,
-	nbufelements,
-	self->buf_srate);
+  gstbt_adsr_get_value_array_f(
+	self->adsr, synth->running_time, 1e9L / synth->info.rate, nbufelements, self->buf_srate);
   
   const gfloat fscale = 32768.0f * self->vol;
   for (int i = 0; i < nbufelements; ++i)
@@ -534,18 +516,17 @@ G_DIR_SEPARATOR_S "" PACKAGE "-gst" G_DIR_SEPARATOR_S "GstBtSimSyn.html");*/
 	g_param_spec_float("bend", "Bend", "", -1, 1, 0, flags);
   properties[PROP_VOL] =
 	g_param_spec_float("vol", "vol", "", 0, 1, 0.5, flags);
-  properties[PROP_ATTACK] =
-	g_param_spec_float("attack", "attack", "", 0.0001, 30, 2, flags);
-  properties[PROP_DECAY] =
-	g_param_spec_float("decay", "decay", "", 0.0001, 30, 2, flags);
   properties[PROP_NOTE] =
 	g_param_spec_enum("note", "Note", "", GSTBT_TYPE_NOTE, GSTBT_NOTE_NONE,
 					  G_PARAM_WRITABLE | GST_PARAM_CONTROLLABLE | G_PARAM_STATIC_STRINGS);
 
   for (int i = 1; i < N_PROPERTIES; ++i)
 	g_assert(properties[i]);
-  
+
   g_object_class_install_properties (gobject_class, N_PROPERTIES, properties);
+
+  guint idx = N_PROPERTIES;
+  gstbt_adsr_props_add(gobject_class, "01", &idx);
 
   for (int i = 0; i < sizeof(lut_sin) / sizeof(gfloat); ++i) {
 	lut_sin[i] = (gfloat)sin(G_PI * 2 * ((double)i / (sizeof(lut_sin) / sizeof(gfloat))));
@@ -555,11 +536,11 @@ G_DIR_SEPARATOR_S "" PACKAGE "-gst" G_DIR_SEPARATOR_S "GstBtSimSyn.html");*/
 static void gstbt_additive_init (GstBtAdditive* const self) {
   self->tones = gstbt_tone_conversion_new(GSTBT_TONE_CONVERSION_EQUAL_TEMPERAMENT);
   self->buf = g_malloc(sizeof(gfloat)*self->parent.generate_samples_per_buffer);
-  self->buf_srate = g_malloc(sizeof(gdouble)*self->parent.generate_samples_per_buffer);
+  self->buf_srate = g_malloc(sizeof(gfloat)*self->parent.generate_samples_per_buffer);
 
   self->states_overtone = g_malloc(sizeof(StateOvertone) * MAX_OVERTONES);
 
-  self->adsr = g_object_new(gstbt_adsr_get_type(), NULL);
+  self->adsr = gstbt_adsr_new((GObject*)self, "01");
 
   /*
   
