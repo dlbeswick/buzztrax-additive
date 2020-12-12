@@ -1,5 +1,6 @@
-#include "envelope.h"
-#include "properties_simple.h"
+#include "src/envelope.h"
+#include "src/math.h"
+#include "src/properties_simple.h"
 #include <gst/gstparamspecs.h>
 #include <stdio.h>
 #include <math.h>
@@ -36,27 +37,8 @@ struct _GstBtAdsr {
 
 G_DEFINE_TYPE(GstBtAdsr, gstbt_adsr, GST_TYPE_CONTROL_SOURCE);
 
-static inline gint bitselect(gint cond, gint if_t, gint if_f) {
-  return (if_t & -cond) | (if_f & (~(-cond)));
-}
-
-static inline gfloat bitselect_d(gint cond, gfloat if_t, gfloat if_f) {
-  gint ti, fi;
-  memcpy(&ti, &if_t, sizeof(gfloat));
-  memcpy(&fi, &if_f, sizeof(gfloat));
-  gint result = bitselect(cond, ti, fi);
-  gfloat resultd;
-  memcpy(&resultd, &result, sizeof(gint));
-  return resultd;
-}
-
-static inline gfloat clamp(gfloat x) {
-  gfloat result = bitselect_d(x < 0.0, 0.0, x);
-  return bitselect_d(result > 1.0, 1.0, result);
-}
-
 static inline gfloat ab_select(gfloat a, gfloat b, GstClockTime timeb, GstClockTime time) {
-  return bitselect_d(time < timeb, a, b);
+  return bitselect_f(time < timeb, a, b);
 }
 
 static inline gfloat lerp_knee(gfloat a, gfloat b,
@@ -73,7 +55,7 @@ static inline gfloat plerp(gfloat a, gfloat b,
 						   GstClockTime time,
 						   gfloat exp) {
   
-  const gfloat alpha = clamp((float)(time - timea) / (timeb - timea));
+  const gfloat alpha = clamp((float)(time - timea) / (timeb - timea), 0.0f, 1.0f);
   return a + (b-a) * pow(alpha, exp);
 }
 
