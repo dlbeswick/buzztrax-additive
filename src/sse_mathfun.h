@@ -31,6 +31,8 @@
   (this is the zlib license)
 */
 
+#pragma once
+
 #include <xmmintrin.h>
 
 /* yes I know, the top of this file is quite ugly */
@@ -55,11 +57,11 @@ typedef __m64 v2si;   // vector of 2 int (mmx)
 
 /* declare some SSE constants -- why can't I figure a better way to do that? */
 #define _PS_CONST(Name, Val)                                            \
-  /*static*/ const ALIGN16_BEG float _ps_##Name[4] ALIGN16_END = { Val, Val, Val, Val }
+  static const ALIGN16_BEG float _ps_##Name[4] ALIGN16_END = { Val, Val, Val, Val }
 #define _PI32_CONST(Name, Val)                                            \
-  /*static*/ const ALIGN16_BEG int _pi32_##Name[4] ALIGN16_END = { Val, Val, Val, Val }
+  static const ALIGN16_BEG int _pi32_##Name[4] ALIGN16_END = { Val, Val, Val, Val }
 #define _PS_CONST_TYPE(Name, Type, Val)                                 \
-  /*static*/ const ALIGN16_BEG Type _ps_##Name[4] ALIGN16_END = { Val, Val, Val, Val }
+  static const ALIGN16_BEG Type _ps_##Name[4] ALIGN16_END = { Val, Val, Val, Val }
 
 _PS_CONST(1  , 1.0f);
 _PS_CONST(0p5, 0.5f);
@@ -111,7 +113,7 @@ typedef union xmm_mm_union {
 /* natural logarithm computed for 4 simultaneous float 
    return NaN for x <= 0
 */
-inline v4sf log_ps(v4sf x) {
+static inline v4sf log_ps(v4sf x) {
 #ifdef USE_SSE2
   v4si emm0;
 #else
@@ -213,7 +215,7 @@ _PS_CONST(cephes_exp_p3, 4.1665795894E-2);
 _PS_CONST(cephes_exp_p4, 1.6666665459E-1);
 _PS_CONST(cephes_exp_p5, 5.0000001201E-1);
 
-inline v4sf exp_ps(v4sf x) {
+static inline v4sf exp_ps(v4sf x) {
   v4sf tmp = _mm_setzero_ps(), fx;
 #ifdef USE_SSE2
   v4si emm0;
@@ -331,7 +333,7 @@ _PS_CONST(cephes_FOPI, 1.27323954473516); // 4 / M_PI
    Since it is based on SSE intrinsics, it has to be compiled at -O2 to
    deliver full speed.
 */
-inline v4sf sin_ps(v4sf x) { // any x
+static inline v4sf sin_ps(v4sf x) { // any x
   v4sf xmm1, xmm2 = _mm_setzero_ps(), xmm3, sign_bit, y;
 
 #ifdef USE_SSE2
@@ -448,7 +450,7 @@ inline v4sf sin_ps(v4sf x) { // any x
 }
 
 /* almost the same as sin_ps */
-v4sf cos_ps(v4sf x) { // any x
+static inline v4sf cos_ps(v4sf x) { // any x
   v4sf xmm1, xmm2 = _mm_setzero_ps(), xmm3, y;
 #ifdef USE_SSE2
   v4si emm0, emm2;
@@ -567,7 +569,7 @@ v4sf cos_ps(v4sf x) { // any x
 
 /* since sin_ps and cos_ps are almost identical, sincos_ps could replace both of them..
    it is almost as fast, and gives you a free cosine with your sine */
-void sincos_ps(v4sf x, v4sf *s, v4sf *c) {
+static inline void sincos_ps(v4sf x, v4sf *s, v4sf *c) {
   v4sf xmm1, xmm2, xmm3 = _mm_setzero_ps(), sign_bit_sin, y;
 #ifdef USE_SSE2
   v4si emm0, emm2, emm4;

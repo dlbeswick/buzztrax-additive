@@ -3,7 +3,6 @@
 
 #include "src/envelope.h"
 #include "src/math.h"
-#include "src/sse_mathfun.h"
 #include "src/voice.h"
 
 #include "libbuzztrax-gst/audiosynth.h"
@@ -27,19 +26,10 @@ GType gstbt_additive_get_type(void);
 #define GST_CAT_DEFAULT additive_debug
 GST_DEBUG_CATEGORY_STATIC(GST_CAT_DEFAULT);
 
-typedef gdouble v4sd __attribute__ ((vector_size (32)));
-typedef gint v4si __attribute__ ((vector_size (16)));
-typedef guint v4ui __attribute__ ((vector_size (16)));
-typedef gint16 v4ss __attribute__ ((vector_size (8)));
-
 const float FPI = (gfloat)G_PI;
 const float F2PI = (gfloat)(2*G_PI);
 
 static gfloat lut_sin[1024];
-
-// libmvec
-// https://stackoverflow.com/questions/40475140/mathematical-functions-for-simd-registers
-v4sf _ZGVbN4vv_powf(v4sf x, v4sf y);
 
 enum { MAX_VOICES = 24 };
 enum { MAX_OVERTONES = 600 };
@@ -374,6 +364,14 @@ static inline gfloat window_sharp_cosine(gfloat sample, gfloat sample_center, gf
 	);
 }
 
+static inline v4sf window_sharp_cosine4(v4sf sample, v4sf sample_center, v4sf rate, v4sf sharpness) {
+  v4sf result;
+  for (guint i = 0; i < 4; ++i) {
+	result[i] = window_sharp_cosine(sample[i], sample_center[i], rate[i], sharpness[i]);
+  }
+  return result;
+}
+
 inline static gfloat* srate_prop_buf_get(const GstBtAdditive* const self, PropsSrate prop) {
   return self->buf_srate_props + self->parent.generate_samples_per_buffer * (guint)prop;
 }
@@ -416,61 +414,71 @@ static gboolean _process(GstBtAudioSynth* synth, GstBuffer* gstbuf, GstMapInfo* 
   memset(buf, 0, nbufelements*sizeof(typeof(*buf)));
 
   const gfloat freq_note = (gfloat)gstbt_tone_conversion_translate_from_number(self->tones, self->note);
-  const gfloat freq = freq_note + freq_note * self->bend;
 
   // Limit the number of overtones to reduce aliasing.
   const gint max_overtones = (gint)MIN(
-	((self->freq_max - self->ampfreq_scale_offset) / freq / self->ampfreq_scale_idx_mul - 1),
+	((self->freq_max - self->ampfreq_scale_offset) / freq_note / self->ampfreq_scale_idx_mul - 1),
 	self->overtones
 	);
 	
+  const v4sf tiny = V4SF_UNIT * 1e-6f;
+  const v4sf freq_limit = V4SF_UNIT * 44100.0f;
+  const v4sf freq_note4 = V4SF_UNIT * freq_note;
+  const v4sf ampfreq_scale_idx_mul4 = V4SF_UNIT * self->ampfreq_scale_idx_mul;
+  const v4sf amp_boost_center4 = V4SF_UNIT * self->amp_boost_center;
+  const v4sf amp_boost_sharpness4 = V4SF_UNIT * self->amp_boost_sharpness;
+  const v4sf amp_boost_exp4 = V4SF_UNIT * self->amp_boost_exp;
+  const v4sf amp_pow_base4 = V4SF_UNIT * self->amp_pow_base;
+  const v4sf amp_exp_idx_mul4 = V4SF_UNIT * self->amp_exp_idx_mul;
+  const v4sf ampfreq_scale_exp4 = V4SF_UNIT * self->ampfreq_scale_exp;
+  
   for (int j = self->sum_start_idx, idx_o = 0; j != self->sum_start_idx + 1 + max_overtones; ++j, ++idx_o) {
-	const gfloat hscale_freq = self->ampfreq_scale_idx_mul * (gfloat)j + self->ampfreq_scale_offset;
-	if (hscale_freq <= 0)
-	  continue;
 	g_assert(idx_o < MAX_OVERTONES);
-
 	StateOvertone* const overtone = &self->states_overtone[idx_o];
-
-	const gfloat freq_overtone = freq * hscale_freq;
 	
-	const gfloat amp_boost =
-	  1.0f +
-	  powf(window_sharp_cosine(freq_overtone, self->amp_boost_center, 44100.0f, self->amp_boost_sharpness),
-		   self->amp_boost_exp) *
-	  self->amp_boost_db_calc
-	  ;
-	
-	const gfloat hscale_amp =
-	  powf(self->amp_pow_base, (gfloat)j * self->amp_exp_idx_mul) *
-	  powf(hscale_freq, self->ampfreq_scale_exp) *
-	  amp_boost;
+	const v4sf* const srate_bend = (const v4sf*)srate_prop_buf_get(self, PROP_BEND);
+	for (int i = 0; i < nbuf4elements; ++i) {
+	  const v4sf freq = freq_note4 + freq_note4 * self->bend * srate_bend[i];
+	  const v4sf hscale_freq = maxf4(ampfreq_scale_idx_mul4 * (gfloat)j + self->ampfreq_scale_offset, tiny);
 
-	const gfloat time_to_rads = F2PI * freq_overtone;
-	const gfloat inc = time_to_rads * (1.0f/rate);
+	  const v4sf freq_overtone = freq * hscale_freq;
+	  //GST_INFO("%f %f %f %f", freq_overtone[0], freq_overtone[1], freq_overtone[2], freq_overtone[3]);
+	
+	  const v4sf amp_boost =
+		1.0f +
+		powf4(window_sharp_cosine4(freq_overtone, amp_boost_center4, freq_limit, amp_boost_sharpness4),
+			  amp_boost_exp4) *
+		self->amp_boost_db_calc
+		;
+	
+	  const v4sf hscale_amp =
+		powf4(amp_pow_base4, (gfloat)j * amp_exp_idx_mul4) *
+		powf4(hscale_freq, ampfreq_scale_exp4) *
+		amp_boost;
+
+	  const v4sf time_to_rads = F2PI * freq_overtone;
+	  const v4sf inc = time_to_rads * (1.0f/rate);
 	  
-	if (self->ringmod_depth > 0) {
-	  const gfloat inc_rm = time_to_rads * self->ringmod_depth * (1.0f/rate);
+	  const v4sf inc_rm = time_to_rads * self->ringmod_depth * (1.0f/rate);
 
-	  const v4sf f = {inc, inc * 2, inc * 3, inc * 4};
-	  const v4sf f_rm = {inc_rm, inc_rm * 2, inc_rm * 3, inc_rm * 4};
-	  const v4sf v_exp = {self->ringmod_rate, self->ringmod_rate, self->ringmod_rate, self->ringmod_rate};
-	  for (int i = 0; i < nbuf4elements; ++i) {
-		buf4[i] += hscale_amp *
-		  sin_ps_method(overtone->accum_rads + f) *
-		  powsin_ps(overtone->accum_rm_rads + f_rm, v_exp)
-		  ;
-		overtone->accum_rads += f[3];
-		overtone->accum_rm_rads += f_rm[3];
-	  }
-	  overtone->accum_rm_rads = fmodf(overtone->accum_rm_rads, F2PI);
-	} else {
-	  const v4sf f = {inc, inc * 2, inc * 3, inc * 4};
-	  for (int i = 0; i < nbuf4elements; ++i) {
-		buf4[i] += hscale_amp * sin_ps_method(overtone->accum_rads + f);
-		overtone->accum_rads += f[3];
-	  }
+	  const v4sf f = {
+		overtone->accum_rads + inc[0],
+		overtone->accum_rads + inc[0] + inc[1],
+		overtone->accum_rads + inc[0] + inc[1] + inc[2],
+		overtone->accum_rads + inc[0] + inc[1] + inc[2] + inc[3]
+	  };
+	  const v4sf f_rm = {
+		overtone->accum_rm_rads + inc_rm[0],
+		overtone->accum_rm_rads + inc_rm[0] + inc_rm[1],
+		overtone->accum_rm_rads + inc_rm[0] + inc_rm[1] + inc_rm[2],
+		overtone->accum_rm_rads + inc_rm[0] + inc_rm[1] + inc_rm[2] + inc_rm[3]
+	  };
+		
+	  buf4[i] += hscale_amp * sin_ps_method(f) * powsin_ps(f_rm, V4SF_UNIT * self->ringmod_rate);
+	  overtone->accum_rads = f[3];
+	  overtone->accum_rm_rads = f_rm[3];
 	}
+	overtone->accum_rm_rads = fmodf(overtone->accum_rm_rads, F2PI);
 	overtone->accum_rads = fmodf(overtone->accum_rads, F2PI);
   }
 
@@ -614,4 +622,13 @@ G_DIR_SEPARATOR_S "" PACKAGE "-gst" G_DIR_SEPARATOR_S "GstBtSimSyn.html");*/
   for (int i = 0; i < sizeof(lut_sin) / sizeof(typeof(lut_sin)); ++i) {
 	lut_sin[i] = (gfloat)sin(G_PI * 2 * ((double)i / (sizeof(lut_sin) / sizeof(typeof(lut_sin)))));
   }
+
+  v4sf a = {0,2,4,6};
+  v4sf b = {7,5,3,1};
+  v4sf c = {7,5,4,6};
+  v4sf r = maxf4(a, b);
+  g_assert(r[0] == c[0]);
+  g_assert(r[1] == c[1]);
+  g_assert(r[2] == c[2]);
+  g_assert(r[3] == c[3]);
 }
