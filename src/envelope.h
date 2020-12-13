@@ -14,5 +14,5 @@ gboolean gstbt_adsr_property_get(GObject* obj, guint prop_id, GValue* value, GPa
 gfloat gstbt_adsr_get_value_f(GstBtAdsr* self, GstClockTime timestamp, gfloat* value);
 void gstbt_adsr_get_value_array_f(GstBtAdsr* self, GstClockTime timestamp, GstClockTime interval,
 								  guint n_values, gfloat* values);
-void gstbt_adsr_mod_value_array_f(GstBtAdsr* self, GstClockTime timestamp, GstClockTime interval,
-								  guint n_values, gfloat* values);
+gboolean gstbt_adsr_mod_value_array_f(GstBtAdsr* self, GstClockTime timestamp, GstClockTime interval,
+									  guint n_values, gfloat* values);

@@ -125,12 +125,16 @@ void gstbt_adsr_get_value_array_f(GstBtAdsr* self, GstClockTime timestamp, GstCl
   }
 }
 
-void gstbt_adsr_mod_value_array_f(GstBtAdsr* self, GstClockTime timestamp, GstClockTime interval,
-								  guint n_values, gfloat* values) {
+gboolean gstbt_adsr_mod_value_array_f(GstBtAdsr* self, GstClockTime timestamp, GstClockTime interval,
+									  guint n_values, gfloat* values) {
+  gfloat accum = 0;
   for (guint i = 0; i < n_values; ++i) {
-	values[i] *= get_value_inline(self, timestamp);
+	const gfloat val = get_value_inline(self, timestamp);
+	values[i] *= val;
+	accum += val;
 	timestamp += interval;
   }
+  return accum != 0;
 }
 
 gboolean gstbt_adsr_property_set(GObject* obj, guint prop_id, const GValue* value, GParamSpec* pspec) {

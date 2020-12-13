@@ -28,6 +28,10 @@ static inline gint bitselect(gint cond, gint if_t, gint if_f) {
   return (if_t & -cond) | (if_f & (~(-cond)));
 }
 
+static inline v4si bitselect4(v4si cond, v4si if_t, v4si if_f) {
+  return (if_t & -cond) | (if_f & (~(-cond)));
+}
+
 static inline gfloat bitselect_f(gint cond, gfloat if_t, gfloat if_f) {
   gint ti, fi;
   memcpy(&ti, &if_t, sizeof(gfloat));
@@ -35,6 +39,16 @@ static inline gfloat bitselect_f(gint cond, gfloat if_t, gfloat if_f) {
   gint result = bitselect(cond, ti, fi);
   gfloat resultf;
   memcpy(&resultf, &result, sizeof(gint));
+  return resultf;
+}
+
+static inline v4sf bitselect_4f(v4si cond, v4sf if_t, v4sf if_f) {
+  v4si ti, fi;
+  memcpy(&ti, &if_t, sizeof(v4sf));
+  memcpy(&fi, &if_f, sizeof(v4sf));
+  v4si result = bitselect4(cond, ti, fi);
+  v4sf resultf;
+  memcpy(&resultf, &result, sizeof(v4si));
   return resultf;
 }
 

@@ -81,6 +81,8 @@ typedef struct
 
   gint calls;
   long time_accum;
+  gboolean props_srate_active[N_PROPERTIES_SRATE];
+  gboolean props_srate_controlled[N_PROPERTIES_SRATE];
 } GstBtAdditive;
 
 enum {
@@ -379,6 +381,9 @@ inline static gfloat* srate_prop_buf_get(const GstBtAdditive* const self, PropsS
 static void srate_props_fill(GstBtAdditive* const self, GstClockTime timestamp, GstClockTime interval) {
   for (guint i = 0; i < self->parent.generate_samples_per_buffer * N_PROPERTIES_SRATE; ++i)
 	self->buf_srate_props[i] = 1.0f;
+
+  memset(self->props_srate_active, 0, sizeof(self->props_srate_active));
+  memset(self->props_srate_controlled, 0, sizeof(self->props_srate_controlled));
   
   for (guint i = 0; i < self->n_voices; ++i) {
 	gstbt_additivev_get_value_array_f_for_prop(
@@ -386,7 +391,9 @@ static void srate_props_fill(GstBtAdditive* const self, GstClockTime timestamp, 
 	  timestamp,
 	  interval,
 	  self->parent.generate_samples_per_buffer,
-	  self->buf_srate_props
+	  self->buf_srate_props,
+	  self->props_srate_active,
+	  self->props_srate_controlled
 	  );
   }
 }
@@ -396,13 +403,26 @@ static gboolean _process(GstBtAudioSynth* synth, GstBuffer* gstbuf, GstMapInfo* 
   clock_gettime(CLOCK_THREAD_CPUTIME_ID, &clock_start);
   
   GstBtAdditive* const self = GSTBT_ADDITIVE(synth);
-  const gfloat rate = (gfloat)GSTBT_AUDIO_SYNTH(self)->info.rate;
+
+  const gfloat rate = synth->info.rate;
 
   for (int i = 0; i < self->n_voices; ++i) {
 	gstbt_additivev_process(self->voices[i], gstbuf);
   }
 
-  srate_props_fill(self, synth->running_time, 1e9L / synth->info.rate);
+  srate_props_fill(self, synth->running_time, 1e9L / rate);
+  
+  if (self->props_srate_controlled[PROP_VOL]) {
+	if (!self->props_srate_active[PROP_VOL]) {
+	  memset(info->data, 0, synth->generate_samples_per_buffer * sizeof(guint16));
+	  return TRUE;
+	}
+  } else {
+	if (self->vol == 0) {
+	  memset(info->data, 0, synth->generate_samples_per_buffer * sizeof(guint16));
+	  return TRUE;
+	}
+  }
   
   self->running_time_last = synth->running_time;
   

@@ -16,6 +16,8 @@ void gstbt_additivev_get_value_array_f_for_prop(
   GstClockTime timestamp,
   GstClockTime interval,
   guint n_values,
-  gfloat* values);
+  gfloat* values,
+  gboolean props_active[],
+  gboolean props_controlled[]);
 
 G_END_DECLS
