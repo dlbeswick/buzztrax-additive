@@ -1,3 +1,21 @@
+/*
+  Additive synth for Buzztrax
+  Copyright (C) 2020 David Beswick
+
+  This program is free software: you can redistribute it and/or modify
+  it under the terms of the GNU General Public License as published by
+  the Free Software Foundation, either version 3 of the License, or
+  (at your option) any later version.
+  
+  This program is distributed in the hope that it will be useful,
+  but WITHOUT ANY WARRANTY; without even the implied warranty of
+  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+  GNU General Public License for more details.
+
+  You should have received a copy of the GNU General Public License
+  along with this program.  If not, see <https://www.gnu.org/licenses/>.
+*/
+
 #include "config.h"
 #include "src/genums.h"
 
@@ -76,12 +94,11 @@ typedef struct
   gfloat* buf;
   gfloat* buf_srate_props;
   StateOvertone* states_overtone;
-  GstClockTime running_time_last;
   GstBtAdditiveV* voices[MAX_VOICES];
 
   gint calls;
   long time_accum;
-  gboolean props_srate_active[N_PROPERTIES_SRATE];
+  gboolean props_srate_nonzero[N_PROPERTIES_SRATE];
   gboolean props_srate_controlled[N_PROPERTIES_SRATE];
 } GstBtAdditive;
 
@@ -382,7 +399,7 @@ static void srate_props_fill(GstBtAdditive* const self, GstClockTime timestamp, 
   for (guint i = 0; i < self->parent.generate_samples_per_buffer * N_PROPERTIES_SRATE; ++i)
 	self->buf_srate_props[i] = 1.0f;
 
-  memset(self->props_srate_active, 0, sizeof(self->props_srate_active));
+  memset(self->props_srate_nonzero, 0, sizeof(self->props_srate_nonzero));
   memset(self->props_srate_controlled, 0, sizeof(self->props_srate_controlled));
   
   for (guint i = 0; i < self->n_voices; ++i) {
@@ -392,9 +409,17 @@ static void srate_props_fill(GstBtAdditive* const self, GstClockTime timestamp, 
 	  interval,
 	  self->parent.generate_samples_per_buffer,
 	  self->buf_srate_props,
-	  self->props_srate_active,
+	  self->props_srate_nonzero,
 	  self->props_srate_controlled
 	  );
+  }
+}
+
+static gboolean is_machine_silent(GstBtAudioSynth* synth) {
+  if (self->props_srate_controlled[PROP_VOL]) {
+	return !self->props_srate_nonzero[PROP_VOL];
+  } else {
+	return self->vol == 0;
   }
 }
 
@@ -412,24 +437,16 @@ static gboolean _process(GstBtAudioSynth* synth, GstBuffer* gstbuf, GstMapInfo* 
 
   srate_props_fill(self, synth->running_time, 1e9L / rate);
   
-  if (self->props_srate_controlled[PROP_VOL]) {
-	if (!self->props_srate_active[PROP_VOL]) {
-	  memset(info->data, 0, synth->generate_samples_per_buffer * sizeof(guint16));
-	  return TRUE;
-	}
-  } else {
-	if (self->vol == 0) {
-	  memset(info->data, 0, synth->generate_samples_per_buffer * sizeof(guint16));
-	  return TRUE;
-	}
+  if (is_machine_silent(self)) {
+	memset(info->data, 0, synth->generate_samples_per_buffer * sizeof(guint16));
+
+	// Note: if FALSE is returned here then downstream effects stop making noise.
+	return TRUE;
   }
-  
-  self->running_time_last = synth->running_time;
   
   gfloat* const buf = self->buf;
   v4sf* const buf4 = (v4sf*)self->buf;
-  const int nbufelements = synth->generate_samples_per_buffer;
-  const int nbuf4elements = nbufelements/4;
+  const int nbuf4elements = synth->generate_samples_per_buffer/4;
 
   memset(buf, 0, nbufelements*sizeof(typeof(*buf)));
 
@@ -462,7 +479,6 @@ static gboolean _process(GstBtAudioSynth* synth, GstBuffer* gstbuf, GstMapInfo* 
 	  const v4sf hscale_freq = maxf4(ampfreq_scale_idx_mul4 * (gfloat)j + self->ampfreq_scale_offset, tiny);
 
 	  const v4sf freq_overtone = freq * hscale_freq;
-	  //GST_INFO("%f %f %f %f", freq_overtone[0], freq_overtone[1], freq_overtone[2], freq_overtone[3]);
 	
 	  const v4sf amp_boost =
 		1.0f +
@@ -495,6 +511,7 @@ static gboolean _process(GstBtAudioSynth* synth, GstBuffer* gstbuf, GstMapInfo* 
 	  };
 		
 	  buf4[i] += hscale_amp * sin_ps_method(f) * powsin_ps(f_rm, V4SF_UNIT * self->ringmod_rate);
+	  
 	  overtone->accum_rads = f[3];
 	  overtone->accum_rm_rads = f_rm[3];
 	}
@@ -512,7 +529,7 @@ static gboolean _process(GstBtAudioSynth* synth, GstBuffer* gstbuf, GstMapInfo* 
   clock_gettime(CLOCK_THREAD_CPUTIME_ID, &clock_end);
   self->time_accum += (clock_end.tv_sec - clock_start.tv_sec) * 1e9L +  (clock_end.tv_nsec - clock_start.tv_nsec);
   if (++self->calls == 250) {
-	GST_INFO("Avg perf: %f samples/sec\n", 1.0f / (self->time_accum / 1e9f / (self->calls * nbufelements)));
+	GST_INFO("Avg perf: %f samples/sec\n", 1.0f / (self->time_accum / 1e9f / (self->calls * nbuf4elements * 4)));
 	self->time_accum = 0;
 	self->calls = 0;
   }
