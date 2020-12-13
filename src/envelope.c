@@ -125,12 +125,20 @@ void gstbt_adsr_get_value_array_f(GstBtAdsr* self, GstClockTime timestamp, GstCl
   }
 }
 
-void gst_bt_adsr_property_set(GObject* obj, guint prop_id, const GValue* value, GParamSpec* pspec) {
-  bt_properties_simple_set(((GstBtAdsr*)obj)->props, pspec, value);
+void gstbt_adsr_mod_value_array_f(GstBtAdsr* self, GstClockTime timestamp, GstClockTime interval,
+								  guint n_values, gfloat* values) {
+  for (guint i = 0; i < n_values; ++i) {
+	values[i] *= get_value_inline(self, timestamp);
+	timestamp += interval;
+  }
 }
 
-void gst_bt_adsr_property_get(GObject* obj, guint prop_id, GValue* value, GParamSpec* pspec) {
-  bt_properties_simple_get(((GstBtAdsr*)obj)->props, pspec, value);
+gboolean gstbt_adsr_property_set(GObject* obj, guint prop_id, const GValue* value, GParamSpec* pspec) {
+  return bt_properties_simple_set(((GstBtAdsr*)obj)->props, pspec, value);
+}
+
+gboolean gstbt_adsr_property_get(GObject* obj, guint prop_id, GValue* value, GParamSpec* pspec) {
+  return bt_properties_simple_get(((GstBtAdsr*)obj)->props, pspec, value);
 }
 
 static void dispose(GObject* obj) {

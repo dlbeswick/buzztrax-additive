@@ -1,10 +1,10 @@
 #include "config.h"
-//#include "src/genums.h"
-//#include "src/generated/generated-genums.h"
+#include "src/genums.h"
 
 #include "src/envelope.h"
-#include "src/sse_mathfun.h"
 #include "src/math.h"
+#include "src/sse_mathfun.h"
+#include "src/voice.h"
 
 #include "libbuzztrax-gst/audiosynth.h"
 #include "libbuzztrax-gst/childbin.h"
@@ -41,10 +41,8 @@ static gfloat lut_sin[1024];
 // https://stackoverflow.com/questions/40475140/mathematical-functions-for-simd-registers
 v4sf _ZGVbN4vv_powf(v4sf x, v4sf y);
 
-enum {
-  MAX_VOICES = 6,
-  MAX_OVERTONES = 600
-};
+enum { MAX_VOICES = 24 };
+enum { MAX_OVERTONES = 600 };
 
 typedef struct {
   gfloat accum_rads;
@@ -61,6 +59,7 @@ typedef struct
 {
   GstBtAudioSynth parent;
 
+  gulong n_voices;
   guint overtones;
   gfloat freq_max;
   gint sum_start_idx;
@@ -69,12 +68,10 @@ typedef struct
   gfloat ampfreq_scale_idx_mul;
   gfloat ampfreq_scale_offset;
   gfloat ampfreq_scale_exp;
-
   gfloat amp_boost_center;
   gfloat amp_boost_sharpness;
   gfloat amp_boost_exp;
   gfloat amp_boost_db;
-  
   gfloat bend;
   gfloat ringmod_rate;
   gfloat ringmod_depth;
@@ -87,62 +84,45 @@ typedef struct
   gfloat accum_rads;
   GstBtToneConversion* tones;
   gfloat* buf;
-  gfloat* buf_srate;
+  gfloat* buf_srate_props;
   StateOvertone* states_overtone;
-  GstBtAdsr* adsr;
   GstClockTime running_time_last;
+  GstBtAdditiveV* voices[MAX_VOICES];
 
   gint calls;
   long time_accum;
 } GstBtAdditive;
 
-enum
-{
-  PROP_CHILDREN = 1,
+enum {
+  PROP_CHILDREN = N_PROPERTIES_SRATE,
   PROP_OVERTONES,
-  PROP_FREQ_MAX,
-  PROP_SUM_START_IDX,
-  PROP_AMP_POW_BASE,
-  PROP_AMP_EXP_IDX_MUL,
-  PROP_AMPFREQ_SCALE_IDX_MUL,
-  PROP_AMPFREQ_SCALE_OFFSET,
-  PROP_AMPFREQ_SCALE_EXP,
-  PROP_AMP_BOOST_CENTER,
-  PROP_AMP_BOOST_SHARPNESS,
-  PROP_AMP_BOOST_EXP,
-  PROP_AMP_BOOST_DB,
-  PROP_RINGMOD_RATE,
-  PROP_RINGMOD_DEPTH,
-  PROP_RINGMOD_OT_OFFSET,
-  PROP_BEND,
-  PROP_VOL,
   PROP_NOTE,
   N_PROPERTIES
 };
-static GParamSpec *properties[N_PROPERTIES] = { NULL, };
+
+static GParamSpec* properties[N_PROPERTIES] = { NULL, };
 
 
-
-static GObject *gstbt_additive_child_proxy_get_child_by_index (GstChildProxy *child_proxy, guint index) {
-  //GstBtAdditive *self = GSTBT_ADDITIVE(child_proxy);
+static GObject* child_proxy_get_child_by_index (GstChildProxy *child_proxy, guint index) {
+  GstBtAdditive* self = GSTBT_ADDITIVE(child_proxy);
 
   g_return_val_if_fail(index < MAX_VOICES, NULL);
 
-  return NULL;//(GObject *)gst_object_ref(self->voices[index]);
+  return gst_object_ref(self->voices[index]);
 }
 
-static guint gstbt_additive_child_proxy_get_children_count (GstChildProxy *child_proxy) {
-  //GstBtAdditive *self = GSTBT_ADDITIVE(child_proxy);
-  return 0;//self->cntVoices;
+static guint child_proxy_get_children_count (GstChildProxy *child_proxy) {
+  GstBtAdditive* self = GSTBT_ADDITIVE(child_proxy);
+  return self->n_voices;
 }
 
-static void gstbt_additive_child_proxy_interface_init (gpointer g_iface, gpointer iface_data) {
-  GstChildProxyInterface *iface = (GstChildProxyInterface *)g_iface;
+static void child_proxy_interface_init (gpointer g_iface, gpointer iface_data) {
+  GstChildProxyInterface* iface = (GstChildProxyInterface*)g_iface;
 
   GST_INFO("initializing iface");
 
-  iface->get_child_by_index = gstbt_additive_child_proxy_get_child_by_index;
-  iface->get_children_count = gstbt_additive_child_proxy_get_children_count;
+  iface->get_child_by_index = child_proxy_get_child_by_index;
+  iface->get_children_count = child_proxy_get_children_count;
 }
 
 //-- the class
@@ -150,7 +130,7 @@ G_DEFINE_TYPE_WITH_CODE (
   GstBtAdditive,
   gstbt_additive,
   GSTBT_TYPE_AUDIO_SYNTH,
-  G_IMPLEMENT_INTERFACE (GST_TYPE_CHILD_PROXY, gstbt_additive_child_proxy_interface_init)
+  G_IMPLEMENT_INTERFACE (GST_TYPE_CHILD_PROXY, child_proxy_interface_init)
   G_IMPLEMENT_INTERFACE (GSTBT_TYPE_CHILD_BIN, NULL))
 
 static gboolean plugin_init(GstPlugin * plugin) {
@@ -179,19 +159,23 @@ static void _set_property (GObject * object, guint prop_id, const GValue * value
   GstBtAdditive *self = GSTBT_ADDITIVE (object);
 
   switch (prop_id) {
+  case PROP_CHILDREN:
+	self->n_voices = g_value_get_ulong(value);
+	break;
   case PROP_NOTE: {
 	GstBtNote note = g_value_get_enum(value);
 	if (note == GSTBT_NOTE_OFF) {
-	  gstbt_adsr_off(self->adsr, self->parent.running_time);
+	  for (guint i = 0; i < self->n_voices; ++i) {
+		gstbt_additivev_note_off(self->voices[i], self->parent.running_time);
+	  }
 	} else if (note != GSTBT_NOTE_NONE) {
 	  self->note = note;
-	  gstbt_adsr_trigger(self->adsr, self->parent.running_time);
+	  for (guint i = 0; i < self->n_voices; ++i) {
+		gstbt_additivev_note_on(self->voices[i], self->parent.running_time);
+	  }
 	}
 	break;
   }
-  case PROP_CHILDREN:
-	//self->cntVoices = g_value_get_ulong(value);
-	break;
   case PROP_OVERTONES:
 	self->overtones = g_value_get_uint(value);
 	break;
@@ -250,8 +234,7 @@ static void _set_property (GObject * object, guint prop_id, const GValue * value
 	self->vol = g_value_get_float(value);
 	break;
   default:
-	gst_bt_adsr_property_set((GObject*)self->adsr, prop_id, value, pspec);
-	//G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
+	G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
 	break;
   }
 }
@@ -261,10 +244,10 @@ static void _get_property (GObject * object, guint prop_id, GValue * value, GPar
 
   switch (prop_id) {
   case PROP_CHILDREN:
-	//self->cntVoices = g_value_get_ulong(value);
+	g_value_set_ulong(value, self->n_voices);
 	break;
   case PROP_OVERTONES:
-	g_value_set_uint(value, (guint)self->overtones);
+	g_value_set_uint(value, self->overtones);
 	break;
   case PROP_FREQ_MAX:
 	g_value_set_float(value, self->freq_max);
@@ -315,8 +298,7 @@ static void _get_property (GObject * object, guint prop_id, GValue * value, GPar
 	g_value_set_float(value, self->vol);
 	break;
   default:
-	gst_bt_adsr_property_get((GObject*)self->adsr, prop_id, value, pspec);
-//	G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
+	G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
 	break;
   }
 }
@@ -330,11 +312,11 @@ static inline v4sf lerp_ps(const v4sf a, const v4sf b, const v4sf alpha) {
 // LUT size doesn't seem to affect performance.
 static inline v4sf sin_ps_lut(const v4sf x) {
   const gfloat* const lut = (const gfloat*)lut_sin;
-  const v4sf x_scale = x/F2PI * (sizeof(lut_sin) / sizeof(gfloat));
+  const v4sf x_scale = x/F2PI * (sizeof(lut_sin) / sizeof(typeof(lut_sin)));
   const v4ui whole = __builtin_convertvector(x_scale, v4ui);
   const v4sf frac = x_scale - __builtin_convertvector(whole, v4sf);
-  const v4ui idxa = whole & ((sizeof(lut_sin) / sizeof(gfloat))-1);
-  const v4ui idxb = (idxa+1) & ((sizeof(lut_sin) / sizeof(gfloat))-1);
+  const v4ui idxa = whole & ((sizeof(lut_sin) / sizeof(typeof(lut_sin)))-1);
+  const v4ui idxb = (idxa+1) & ((sizeof(lut_sin) / sizeof(typeof(lut_sin)))-1);
   const v4sf a = {lut[idxa[0]], lut[idxa[1]], lut[idxa[2]], lut[idxa[3]]};
   const v4sf b = {lut[idxb[0]], lut[idxb[1]], lut[idxb[2]], lut[idxb[3]]};
 
@@ -360,7 +342,7 @@ static inline v4sf pow_posexp_ps(const v4sf x, const v4sf vexp) {
 
 // Take a sin with range 0 -> 1 and exponentiate to 'vexp' power
 // Return the result normalized back to -1 -> 1 range.
-// A way of waveshaping on non-odd powers, I suppose.
+// A way of waveshaping using non-odd powers?
 static inline v4sf powsin_ps(const v4sf x, const v4sf vexp) {
   // tbd: inline _ZGVbN4vv_powf?
   // tbd: use loop to avoid use of _ZGVbN4vv_powf? check that it will vectorize.
@@ -392,32 +374,51 @@ static inline gfloat window_sharp_cosine(gfloat sample, gfloat sample_center, gf
 	);
 }
 
-static gboolean _process (GstBtAudioSynth* synth, GstBuffer* gstbuf, GstMapInfo* info) {
+inline static gfloat* srate_prop_buf_get(const GstBtAdditive* const self, PropsSrate prop) {
+  return self->buf_srate_props + self->parent.generate_samples_per_buffer * (guint)prop;
+}
+
+static void srate_props_fill(GstBtAdditive* const self, GstClockTime timestamp, GstClockTime interval) {
+  for (guint i = 0; i < self->parent.generate_samples_per_buffer * N_PROPERTIES_SRATE; ++i)
+	self->buf_srate_props[i] = 1.0f;
+  
+  for (guint i = 0; i < self->n_voices; ++i) {
+	gstbt_additivev_get_value_array_f_for_prop(
+	  self->voices[i],
+	  timestamp,
+	  interval,
+	  self->parent.generate_samples_per_buffer,
+	  self->buf_srate_props
+	  );
+  }
+}
+
+static gboolean _process(GstBtAudioSynth* synth, GstBuffer* gstbuf, GstMapInfo* info) {
   struct timespec clock_start;
   clock_gettime(CLOCK_THREAD_CPUTIME_ID, &clock_start);
   
-  GstBtAdditive * const self = GSTBT_ADDITIVE(synth);
+  GstBtAdditive* const self = GSTBT_ADDITIVE(synth);
   const gfloat rate = (gfloat)GSTBT_AUDIO_SYNTH(self)->info.rate;
 
-  /*  for (int i = 0; i < self->cntVoices; ++i) {
+  for (int i = 0; i < self->n_voices; ++i) {
 	gstbt_additivev_process(self->voices[i], gstbuf);
-	}*/
+  }
 
+  srate_props_fill(self, synth->running_time, 1e9L / synth->info.rate);
+  
   self->running_time_last = synth->running_time;
   
   gfloat* const buf = self->buf;
   v4sf* const buf4 = (v4sf*)self->buf;
   const int nbufelements = synth->generate_samples_per_buffer;
   const int nbuf4elements = nbufelements/4;
-  
-  memset(buf, 0, nbufelements*sizeof(gfloat));
+
+  memset(buf, 0, nbufelements*sizeof(typeof(*buf)));
 
   const gfloat freq_note = (gfloat)gstbt_tone_conversion_translate_from_number(self->tones, self->note);
   const gfloat freq = freq_note + freq_note * self->bend;
 
-  const gfloat freq_top =
-	freq * self->ampfreq_scale_idx_mul * (1+(gfloat)self->overtones) + self->ampfreq_scale_offset;
-
+  // Limit the number of overtones to reduce aliasing.
   const gint max_overtones = (gint)MIN(
 	((self->freq_max - self->ampfreq_scale_offset) / freq / self->ampfreq_scale_idx_mul - 1),
 	self->overtones
@@ -464,23 +465,20 @@ static gboolean _process (GstBtAudioSynth* synth, GstBuffer* gstbuf, GstMapInfo*
 	  }
 	  overtone->accum_rm_rads = fmodf(overtone->accum_rm_rads, F2PI);
 	} else {
-	  const gfloat inc4 = inc * 4;
 	  const v4sf f = {inc, inc * 2, inc * 3, inc * 4};
 	  for (int i = 0; i < nbuf4elements; ++i) {
-		const v4sf ff = f + overtone->accum_rads;
-		buf4[i] += hscale_amp * sin_ps_method(ff);
-		overtone->accum_rads += inc4;
+		buf4[i] += hscale_amp * sin_ps_method(overtone->accum_rads + f);
+		overtone->accum_rads += f[3];
 	  }
 	}
 	overtone->accum_rads = fmodf(overtone->accum_rads, F2PI);
   }
 
-  gstbt_adsr_get_value_array_f(
-	self->adsr, synth->running_time, 1e9L / synth->info.rate, nbufelements, self->buf_srate);
+  const v4sf* const vol_srate = (const v4sf*)srate_prop_buf_get(self, PROP_VOL);
   
   const gfloat fscale = 32768.0f * self->vol;
   for (int i = 0; i < nbuf4elements; ++i)
-	((v4ss*)info->data)[i] = __builtin_convertvector(buf4[i] * fscale * ((v4sf*)self->buf_srate)[i], v4ss);
+	((v4ss*)info->data)[i] = __builtin_convertvector(buf4[i] * fscale * vol_srate[i], v4ss);
   
   struct timespec clock_end;
   clock_gettime(CLOCK_THREAD_CPUTIME_ID, &clock_end);
@@ -503,21 +501,37 @@ static void _negotiate (GstBtAudioSynth* base, GstCaps* caps) {
   }
 }
 
+static void gstbt_additive_init(GstBtAdditive* const self) {
+  self->tones = gstbt_tone_conversion_new(GSTBT_TONE_CONVERSION_EQUAL_TEMPERAMENT);
+  self->buf = g_malloc(sizeof(typeof(*(self->buf))) * self->parent.generate_samples_per_buffer);
+  self->buf_srate_props =
+	g_malloc(sizeof(typeof(*(self->buf_srate_props))) * self->parent.generate_samples_per_buffer * N_PROPERTIES_SRATE);
+
+  self->states_overtone = g_new0(StateOvertone, MAX_OVERTONES);
+
+  for (int i = 0; i < MAX_VOICES; i++) {
+	self->voices[i] = gstbt_additivev_new(&properties[1], N_PROPERTIES_SRATE);
+
+	char name[7];
+	g_snprintf(name, sizeof(name), "voice%1d", i);
+		
+	gst_object_set_name((GstObject *)self->voices[i], name);
+	gst_object_set_parent((GstObject *)self->voices[i], (GstObject *)self);
+  }
+}
+
 static void _dispose (GObject* object) {
   GstBtAdditive* self = GSTBT_ADDITIVE(object);
   g_clear_object(&self->tones);
-  g_clear_object(&self->adsr);
-  g_clear_pointer(&self->buf, free);
-  g_clear_pointer(&self->buf_srate, free);
-  g_free(self->states_overtone);
+  g_clear_pointer(&self->buf, g_free);
+  g_clear_pointer(&self->buf_srate_props, g_free);
+  g_clear_pointer(&self->states_overtone, g_free);
   
   // It's necessary to unparent children so they will be unreffed and cleaned up. GstObject doesn't hold variable
-  // links to its children, so wouldn't know to unparent them.
-  /*
+  // links to its children, so it wouldn't know to unparent them and this would cause a memory leak.
   for (int i = 0; i < MAX_VOICES; i++) {
 	gst_object_unparent((GstObject*)self->voices[i]);
   }
-  */
   G_OBJECT_CLASS(gstbt_additive_parent_class)->dispose(object);
 }
 
@@ -550,11 +564,8 @@ G_DIR_SEPARATOR_S "" PACKAGE "-gst" G_DIR_SEPARATOR_S "GstBtSimSyn.html");*/
   
   // GstBtChildBin interface properties
   properties[PROP_CHILDREN] = g_param_spec_ulong(
-	"children",
-	"",
-	"",
-	0/*1*/, MAX_VOICES, 1,
-	G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS);
+	"children", "Children", "",
+	1, MAX_VOICES, 1, G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS);
 
   // Instance properties
   properties[PROP_OVERTONES] =
@@ -600,32 +611,7 @@ G_DIR_SEPARATOR_S "" PACKAGE "-gst" G_DIR_SEPARATOR_S "GstBtSimSyn.html");*/
 
   g_object_class_install_properties (gobject_class, N_PROPERTIES, properties);
 
-  guint idx = N_PROPERTIES;
-  gstbt_adsr_props_add(gobject_class, "01", &idx);
-
-  for (int i = 0; i < sizeof(lut_sin) / sizeof(gfloat); ++i) {
-	lut_sin[i] = (gfloat)sin(G_PI * 2 * ((double)i / (sizeof(lut_sin) / sizeof(gfloat))));
+  for (int i = 0; i < sizeof(lut_sin) / sizeof(typeof(lut_sin)); ++i) {
+	lut_sin[i] = (gfloat)sin(G_PI * 2 * ((double)i / (sizeof(lut_sin) / sizeof(typeof(lut_sin)))));
   }
-}
-
-static void gstbt_additive_init (GstBtAdditive* const self) {
-  self->tones = gstbt_tone_conversion_new(GSTBT_TONE_CONVERSION_EQUAL_TEMPERAMENT);
-  self->buf = g_malloc(sizeof(gfloat)*self->parent.generate_samples_per_buffer);
-  self->buf_srate = g_malloc(sizeof(gfloat)*self->parent.generate_samples_per_buffer);
-
-  self->states_overtone = g_malloc(sizeof(StateOvertone) * MAX_OVERTONES);
-
-  self->adsr = gstbt_adsr_new((GObject*)self, "01");
-
-  /*
-  
-  for (int i = 0; i < MAX_VOICES; i++) {
-	self->voices[i] = gstbt_additivev_new(i);
-
-	char name[7];
-	snprintf(name, sizeof(name), "voice%1d", i);
-		
-	gst_object_set_name((GstObject *)self->voices[i], name);
-	gst_object_set_parent((GstObject *)self->voices[i], (GstObject *)self);
-	}*/
 }

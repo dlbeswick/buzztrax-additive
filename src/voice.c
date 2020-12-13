@@ -1,113 +1,64 @@
-#include "config.h"
-#include "libbuzztrax-gst/propertymeta.h"
-
 #include "src/voice.h"
+#include "src/envelope.h"
+#include "src/genums.h"
+#include "src/generated/generated-genums.h"
+
+#include "libbuzztrax-gst/propertymeta.h"
 #include <unistd.h>
 #include <stdio.h>
 
-struct _GstBtAlphaJunoCtlV
+struct _GstBtAdditiveV
 {
   GstObject parent;
-	
-  guint channel;
-  guint note_midi_last;
-  guint velocity;
-  guint modulation;
-  gboolean hold;
-  guint aftertouch;
-  GstBtNote note;
+
+  guint idx_target_prop;
+  
+  GstBtAdsr* adsr;
+  GParamSpec** parent_props;
+  guint n_parent_props;
 };
 
 enum
 {
-  PROP_VELOCITY = 1,
-  PROP_MODULATION,
-  PROP_HOLD,
-  PROP_AFTERTOUCH,
-  PROP_NOTE
+  PROP_IDX_TARGET_PROP = 1,
+  N_PROPERTIES
 };
 
-G_DEFINE_TYPE (GstBtAlphaJunoCtlV, gstbt_alphajunoctlv, GST_TYPE_OBJECT)
+static GParamSpec* properties[N_PROPERTIES] = { NULL, };
 
-static void gstbt_alphajunoctlv_init(GstBtAlphaJunoCtlV* const self) {
-  self->note_midi_last = -1;
-}
+G_DEFINE_TYPE (GstBtAdditiveV, gstbt_additivev, GST_TYPE_OBJECT)
 
-//-- property meta interface implementations
+static void property_set(GObject* const object, const guint prop_id, const GValue* const value,
+						 GParamSpec* const pspec) {
+  GstBtAdditiveV *self = GSTBT_ADDITIVEV(object);
 
-static inline void _note_off(GstBtAlphaJunoCtlV* const self, const int fd, const int note_midi) {
-  char out[] = {0x80 + self->channel, note_midi, 0x00};
-  _midi_write(fd, out, sizeof(out));
-  self->note_midi_last = -1;
-}
-
-static void _set_property(GObject* const object, const guint prop_id, const GValue* const value,
-						  GParamSpec* const pspec) {
-  GstBtAlphaJunoCtlV *self = GSTBT_ALPHAJUNOCTLV(object);
-
-  switch (prop_id)
-  {
-  case PROP_NOTE:
-  {
-	guint note = g_value_get_enum(value);
-
-	// 'None' notes are regularly sent by buzztrax.
-	if (note == GSTBT_NOTE_NONE)
-	  break;
-	
-	const int fd = gstbt_alphajunoctl_midiout_get(gst_object_get_parent(&self->parent));
-	if (note == GSTBT_NOTE_OFF) {
-	  _note_off(self, fd, self->note_midi_last);
-	} else {
-	  if (self->note_midi_last != -1) {
-		char out[] = {0x80 + self->channel, self->note_midi_last, 0x00};
-		_midi_write(fd, out, sizeof(out));
-	  }
-
-	  guint note_midi = 12 + MIN((note % 16) + (12 * (note / 16)), 108);
-	  char out[] = {0x90 + self->channel, note_midi, 0x7F};
-	  _midi_write(fd, out, sizeof(out));
-	  self->note_midi_last = note_midi;
+  switch (prop_id) {
+  case PROP_IDX_TARGET_PROP:
+	self->idx_target_prop = MIN(g_value_get_enum(value), self->n_parent_props);
+	break;
+  default:
+	if (!gstbt_adsr_property_set((GObject*)self->adsr, prop_id, value, pspec)) {
+	  G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
 	}
   }
-  break;
-	
-  case PROP_VELOCITY:
-	break;
-  case PROP_MODULATION:
-	break;
-  case PROP_HOLD:
-	break;
-  case PROP_AFTERTOUCH:
-	break;
-  default:
-	G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
-	break;
-  }
 }
 
-static void _get_property (GObject* const object, const guint prop_id, GValue* const value,
-						   GParamSpec* const pspec)
+static void property_get(GObject* const object, const guint prop_id, GValue* const value, GParamSpec* const pspec)
 {
-//  GstBtAlphaJunoCtlV *self = GSTBT_ALPHAJUNOCTLV (object);
+  GstBtAdditiveV *self = GSTBT_ADDITIVEV (object);
 
-  switch (prop_id)
-  {
-  case PROP_VELOCITY:
-	break;
-  case PROP_MODULATION:
-	break;
-  case PROP_HOLD:
-	break;
-  case PROP_AFTERTOUCH:
+  switch (prop_id) {
+  case PROP_IDX_TARGET_PROP:
+	g_value_set_enum(value, self->idx_target_prop);
 	break;
   default:
-	G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
-	break;
+	if (!gstbt_adsr_property_get((GObject*)self->adsr, prop_id, value, pspec)) {
+	  G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
+	}
   }
 }
 
-void gstbt_alphajunoctlv_process(GstBtAlphaJunoCtlV* const self, GstBuffer* const gstbuf) {
+void gstbt_additivev_process(GstBtAdditiveV* const self, GstBuffer* const gstbuf) {
   // Necessary to update parameters from pattern.
   //
   // The parent machine is responsible for delgating process to any children it has; the pattern control group
@@ -115,45 +66,58 @@ void gstbt_alphajunoctlv_process(GstBtAlphaJunoCtlV* const self, GstBuffer* cons
   gst_object_sync_values((GstObject*)self, GST_BUFFER_PTS(gstbuf));
 }
 
-void gstbt_alphajunoctlv_noteall_off(GstBtAlphaJunoCtlV* const self) {
-  const int fd = gstbt_alphajunoctl_midiout_get(gst_object_get_parent(&self->parent));
-  for (int i = 12; i <= 108; ++i) {
-	_note_off(self, fd, i);
+void gstbt_additivev_note_off(GstBtAdditiveV* self, GstClockTime time) {
+  gstbt_adsr_off(self->adsr, time);
+}
+
+void gstbt_additivev_note_on(GstBtAdditiveV* self, GstClockTime time) {
+  gstbt_adsr_trigger(self->adsr, time);
+}
+
+void gstbt_additivev_get_value_array_f_for_prop(
+  const GstBtAdditiveV* self,
+  GstClockTime timestamp,
+  GstClockTime interval,
+  guint n_values,
+  gfloat* values) {
+
+  if (self->idx_target_prop < self->n_parent_props) {
+	gstbt_adsr_mod_value_array_f(
+	  self->adsr, timestamp, interval, n_values, values + n_values * self->idx_target_prop);
   }
 }
 
-static void gstbt_alphajunoctlv_class_init(GstBtAlphaJunoCtlVClass* const klass) {
+static void gstbt_additivev_init(GstBtAdditiveV* const self) {
+  self->adsr = gstbt_adsr_new((GObject*)self, "");
+}
+
+static void dispose(GObject* const gobj) {
+  GstBtAdditiveV* const self = (GstBtAdditiveV*)gobj;
+  g_clear_object(&self->adsr);
+}
+
+static void gstbt_additivev_class_init(GstBtAdditiveVClass* const klass) {
   GObjectClass* const gobject_class = G_OBJECT_CLASS(klass);
-  gobject_class->set_property = _set_property;
-  gobject_class->get_property = _get_property;
+  gobject_class->set_property = property_set;
+  gobject_class->get_property = property_get;
+  gobject_class->dispose = dispose;
 
   const GParamFlags flags = (GParamFlags)
 	(G_PARAM_READWRITE | GST_PARAM_CONTROLLABLE | G_PARAM_STATIC_STRINGS);
 
-  g_object_class_install_property(
-	gobject_class, PROP_VELOCITY,
-	g_param_spec_uint ("velocity", "Velocity", "", 0, 0x7F, 0x7F, flags));
+  properties[PROP_IDX_TARGET_PROP] =
+	g_param_spec_enum("idx-target-prop", "Target Prop.", "Target Parent Property",
+					  props_srate_get_type(), PROP_VOL, flags);
 
-  g_object_class_install_property(
-	gobject_class, PROP_MODULATION,
-	g_param_spec_uint ("modulation", "Modulation", "", 0, 0x7F, 0, flags));
-
-  g_object_class_install_property(
-	gobject_class, PROP_HOLD,
-	g_param_spec_boolean ("hold", "Hold", "", FALSE, flags));
-
-  g_object_class_install_property(
-	gobject_class, PROP_AFTERTOUCH,
-	g_param_spec_uint ("aftertouch", "Aftertouch", "", 0, 0x7F, 0x7F, flags));
-
-  g_object_class_install_property(
-	gobject_class, PROP_NOTE,
-	g_param_spec_enum ("note", "Musical note", "", GSTBT_TYPE_NOTE, GSTBT_NOTE_NONE,
-					   G_PARAM_WRITABLE | GST_PARAM_CONTROLLABLE | G_PARAM_STATIC_STRINGS));
+  g_object_class_install_properties(gobject_class, N_PROPERTIES, properties);
+  
+  guint idx = N_PROPERTIES;
+  gstbt_adsr_props_add(gobject_class, "", &idx);
 }
 
-GstBtAlphaJunoCtlV* gstbt_alphajunoctlv_new(const int channel) {
-  GstBtAlphaJunoCtlV* result = (GstBtAlphaJunoCtlV*)g_object_new(gstbt_alphajunoctlv_get_type(), NULL);
-  result->channel = channel;
+GstBtAdditiveV* gstbt_additivev_new(GParamSpec** parent_props, guint n_parent_props) {
+  GstBtAdditiveV* result = (GstBtAdditiveV*)g_object_new(gstbt_additivev_get_type(), NULL);
+  result->parent_props = parent_props;
+  result->n_parent_props = n_parent_props;
   return result;
 }
