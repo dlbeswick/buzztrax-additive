@@ -29,3 +29,14 @@ This synth uses a unified equation that can cover all the above cases, as follow
 	
 By configuring the parameters correctly, this equation can generate each of the above waveforms, and maybe some other interesting ones besides.
 
+# Some notes on performance
+
+GCC is generally very good at vectorising loops when `-ffast-math` and `-ftree-loop-vectorize` is enabled, but for the important loops I'm often using the vector types and builtins just to be sure that they are being vectorized.
+
+Julien Pommier's SSE math functions were even faster than GCC's trig function vectorisation. The biggest speed gain came from this.
+
+An example of how to examine generated assembly code to see how much has been vectorised:
+
+	gcc -DHAVE_CONFIG_H -I. -I.. -pthread -I../buzztrax-stable/include -I/usr/include/gstreamer-1.0 -I/usr/include/glib-2.0 -I/usr/lib/x86_64-linux-gnu/glib-2.0/include -O2 -ffast-math -lm -ftree-loop-vectorize -std=gnu99 -Werror -Wno-error=unused-variable -Wall -Wshadow -Wpointer-arith -Wstrict-prototypes -fvisibility=hidden -g -fPIC -DPIC -Wa,-adhln ../src/additive.c
+	
+I.e. copy the build command that `make` generates and add `-Wa,-adhln`.
