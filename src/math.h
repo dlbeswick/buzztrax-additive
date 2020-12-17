@@ -26,20 +26,19 @@ typedef gint v4si __attribute__ ((vector_size (16)));
 typedef guint v4ui __attribute__ ((vector_size (16)));
 typedef gint16 v4ss __attribute__ ((vector_size (8)));
 
+static const v4ui V4UI_UNIT = {1, 1, 1, 1};
+static const v4ui V4UI_ZERO = 0 * V4UI_UNIT;
+static const v4ui V4UI_MAX = 0xFFFFFFFF * V4UI_UNIT;
 static const v4sf V4SF_UNIT = {1.0f, 1.0f, 1.0f, 1.0f};
 static const v4sf V4SF_ZERO = 0.0f * V4SF_UNIT;
 
 // libmvec
 // https://stackoverflow.com/questions/40475140/mathematical-functions-for-simd-registers
 v4sf _ZGVbN4vv_powf(v4sf x, v4sf y);
+v4sf _ZGVbN4v_sinf(v4sf x);
 
 static inline v4sf powf4(v4sf a, v4sf b) {
   return _ZGVbN4vv_powf(a, b);
-}
-
-static inline v4sf maxf4(v4sf a, v4sf b) {
-  v4si max = a > b;
-  return a * __builtin_convertvector(-max, v4sf) + b * __builtin_convertvector(-(~max), v4sf);
 }
 
 static inline gint bitselect(gint cond, gint if_t, gint if_f) {
@@ -60,14 +59,26 @@ static inline gfloat bitselect_f(gint cond, gfloat if_t, gfloat if_f) {
   return resultf;
 }
 
-static inline v4sf bitselect_4f(v4si cond, v4sf if_t, v4sf if_f) {
+// Note, function needs to be modified a little from the standard bitselect.
+// For ints, 2 > 1 == 1.
+// For vector ints, {2,2,2,2} > {1,1,1,1} == {-1,-1,-1,-1} (i.e. 0xFFFFFFFF).
+// So the condition shouldn't be negated before ANDing with the results.
+static inline v4sf bitselect_4f(v4ui cond, v4sf if_t, v4sf if_f) {
   v4si ti, fi;
   memcpy(&ti, &if_t, sizeof(v4sf));
   memcpy(&fi, &if_f, sizeof(v4sf));
-  v4si result = bitselect4(cond, ti, fi);
+  v4si result = (ti & cond) | (fi & (~cond));
   v4sf resultf;
   memcpy(&resultf, &result, sizeof(v4si));
   return resultf;
+}
+
+static inline gboolean v4ui_eq(v4ui a, v4ui b) {
+  return a[0] == b[0] && a[1] == b[1] && a[2] == b[2] && a[3] == b[3];
+}
+
+static inline v4sf maxf4(v4sf a, v4sf b) {
+  return bitselect_4f(a > b, a, b);
 }
 
 static inline gfloat clamp(gfloat x, gfloat min, gfloat max) {

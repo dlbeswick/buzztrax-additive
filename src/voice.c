@@ -22,6 +22,7 @@
 #include "src/generated/generated-genums.h"
 
 #include "libbuzztrax-gst/propertymeta.h"
+#include <gst/controller/gstlfocontrolsource.h>
 #include <unistd.h>
 #include <stdio.h>
 
@@ -32,6 +33,7 @@ struct _GstBtAdditiveV
   guint idx_target_prop;
   
   GstBtAdsr* adsr;
+  GstLFOWaveform* lfo;
   GParamSpec** parent_props;
   guint n_parent_props;
 };
@@ -102,8 +104,9 @@ void gstbt_additivev_get_value_array_f_for_prop(
   gboolean* props_controlled) {
 
   if (self->idx_target_prop < self->n_parent_props) {
-	gboolean any_nonzero = gstbt_adsr_mod_value_array_f(
-	  self->adsr, timestamp, interval, n_values, values + n_values * self->idx_target_prop);
+	gboolean any_nonzero = gstbt_prop_srate_cs_mod_value_array_f(
+	  (GstBtPropSrateControlSource*)self->adsr, timestamp, interval, n_values,
+	  values + n_values * self->idx_target_prop);
 
 	props_active[self->idx_target_prop] = props_active[self->idx_target_prop] || any_nonzero;
 	props_controlled[self->idx_target_prop] = TRUE;
@@ -112,6 +115,7 @@ void gstbt_additivev_get_value_array_f_for_prop(
 
 static void gstbt_additivev_init(GstBtAdditiveV* const self) {
   self->adsr = gstbt_adsr_new((GObject*)self, "");
+//  self->lfo = g_object_new(GST_TYPE_LFO_CONTROL_SOURCE,
 }
 
 static void dispose(GObject* const gobj) {
@@ -133,8 +137,39 @@ static void gstbt_additivev_class_init(GstBtAdditiveVClass* const klass) {
 					  props_srate_get_type(), PROP_VOL, flags);
 
   g_object_class_install_properties(gobject_class, N_PROPERTIES, properties);
-  
+
   guint idx = N_PROPERTIES;
+  
+  g_object_class_install_property(
+	gobject_class,
+	idx++,
+	g_param_spec_double("lfo-amplitude", "LFO Amp", "LFO Amplitude", 0, 1, 0, flags)
+	);
+
+  g_object_class_install_property(
+	gobject_class,
+	idx++,
+	g_param_spec_double("lfo-frequency", "LFO Freq", "LFO Frequency", 0, 1, 0, flags)
+	);
+
+  g_object_class_install_property(
+	gobject_class,
+	idx++,
+	g_param_spec_double("lfo-offset", "LFO Offset", "LFO Offset", -1, 1, 0, flags)
+	);
+
+  g_object_class_install_property(
+	gobject_class,
+	idx++,
+	g_param_spec_double("lfo-phase", "LFO Phase", "LFO Phase", -1, 1, 0, flags)
+	);
+
+  g_object_class_install_property(
+	gobject_class,
+	idx++,
+	g_param_spec_uint("lfo-waveform", "LFO Wave", "LFO Waveform", 0, 3, 0, flags)
+	);
+
   gstbt_adsr_props_add(gobject_class, "", &idx);
 }
 

@@ -334,6 +334,7 @@ static inline v4sf sin_ps_lut(const v4sf x) {
 
 static inline v4sf sin_ps_method(const v4sf x) {
   return sin_ps(x);
+//  return _ZGVbN4v_sinf(x);
 }
 
 // Return a sin with range 0 -> 1
@@ -415,7 +416,7 @@ static void srate_props_fill(GstBtAdditive* const self, GstClockTime timestamp, 
   }
 }
 
-static gboolean is_machine_silent(GstBtAudioSynth* synth) {
+static gboolean is_machine_silent(GstBtAdditive* self) {
   if (self->props_srate_controlled[PROP_VOL]) {
 	return !self->props_srate_nonzero[PROP_VOL];
   } else {
@@ -425,11 +426,12 @@ static gboolean is_machine_silent(GstBtAudioSynth* synth) {
 
 static gboolean _process(GstBtAudioSynth* synth, GstBuffer* gstbuf, GstMapInfo* info) {
   struct timespec clock_start;
-  clock_gettime(CLOCK_THREAD_CPUTIME_ID, &clock_start);
+  clock_gettime(CLOCK_MONOTONIC_RAW, &clock_start);
   
   GstBtAdditive* const self = GSTBT_ADDITIVE(synth);
 
   const gfloat rate = synth->info.rate;
+  const gfloat secs_per_sample = 1.0f / rate;
 
   for (int i = 0; i < self->n_voices; ++i) {
 	gstbt_additivev_process(self->voices[i], gstbuf);
@@ -444,45 +446,54 @@ static gboolean _process(GstBtAudioSynth* synth, GstBuffer* gstbuf, GstMapInfo* 
 	return TRUE;
   }
   
-  gfloat* const buf = self->buf;
   v4sf* const buf4 = (v4sf*)self->buf;
   const int nbuf4elements = synth->generate_samples_per_buffer/4;
 
-  memset(buf, 0, nbufelements*sizeof(typeof(*buf)));
+  memset(buf4, 0, nbuf4elements*sizeof(typeof(*buf4)));
 
   const gfloat freq_note = (gfloat)gstbt_tone_conversion_translate_from_number(self->tones, self->note);
 
-  // Limit the number of overtones to reduce aliasing.
-  const gint max_overtones = (gint)MIN(
-	((self->freq_max - self->ampfreq_scale_offset) / freq_note / self->ampfreq_scale_idx_mul - 1),
-	self->overtones
-	);
-	
-  const v4sf tiny = V4SF_UNIT * 1e-6f;
-  const v4sf freq_limit = V4SF_UNIT * 44100.0f;
+  const v4sf tiny = V4SF_UNIT * 1e-6f; // note: also -120db
+  const v4sf freq_max4 = V4SF_UNIT * self->freq_max;
+  const v4sf freq_limit = V4SF_UNIT * 22050.0f;
   const v4sf freq_note4 = V4SF_UNIT * freq_note;
+  const v4sf freq_note4_bend4 = freq_note4 * self->bend;
   const v4sf ampfreq_scale_idx_mul4 = V4SF_UNIT * self->ampfreq_scale_idx_mul;
-  const v4sf amp_boost_center4 = V4SF_UNIT * self->amp_boost_center;
   const v4sf amp_boost_sharpness4 = V4SF_UNIT * self->amp_boost_sharpness;
+  const v4sf amp_boost_center4 = V4SF_UNIT * self->amp_boost_center;
   const v4sf amp_boost_exp4 = V4SF_UNIT * self->amp_boost_exp;
   const v4sf amp_pow_base4 = V4SF_UNIT * self->amp_pow_base;
   const v4sf amp_exp_idx_mul4 = V4SF_UNIT * self->amp_exp_idx_mul;
   const v4sf ampfreq_scale_exp4 = V4SF_UNIT * self->ampfreq_scale_exp;
+
+  v4ui first_sample_active = V4UI_ZERO;
   
-  for (int j = self->sum_start_idx, idx_o = 0; j != self->sum_start_idx + 1 + max_overtones; ++j, ++idx_o) {
+  for (int j = self->sum_start_idx, idx_o = 0; idx_o < self->overtones; ++j, ++idx_o) {
 	g_assert(idx_o < MAX_OVERTONES);
+	const v4sf hscale_freq = maxf4(ampfreq_scale_idx_mul4 * (gfloat)j + self->ampfreq_scale_offset, tiny);
+
 	StateOvertone* const overtone = &self->states_overtone[idx_o];
 	
 	const v4sf* const srate_bend = (const v4sf*)srate_prop_buf_get(self, PROP_BEND);
-	for (int i = 0; i < nbuf4elements; ++i) {
-	  const v4sf freq = freq_note4 + freq_note4 * self->bend * srate_bend[i];
-	  const v4sf hscale_freq = maxf4(ampfreq_scale_idx_mul4 * (gfloat)j + self->ampfreq_scale_offset, tiny);
+	const v4sf* const srate_amp_boost_center = (const v4sf*)srate_prop_buf_get(self, PROP_AMP_BOOST_CENTER);
 
-	  const v4sf freq_overtone = freq * hscale_freq;
+	v4ui all_samples_silent = V4UI_MAX;
+	
+	for (int i = 0; i < nbuf4elements; ++i) {
+	  const v4sf freq_note_bent = freq_note4 + freq_note4_bend4 * srate_bend[i];
+
+	  const v4sf freq_overtone = freq_note_bent * hscale_freq;
+	
+	  // Limit the number of overtones to reduce aliasing.
+	  const v4sf alias_mute = bitselect_4f(freq_overtone > freq_max4, V4SF_ZERO, V4SF_UNIT);
 	
 	  const v4sf amp_boost =
-		1.0f +
-		powf4(window_sharp_cosine4(freq_overtone, amp_boost_center4, freq_limit, amp_boost_sharpness4),
+		alias_mute +
+		powf4(window_sharp_cosine4(
+				freq_overtone,
+				amp_boost_center4 * srate_amp_boost_center[i],
+				freq_limit,
+				amp_boost_sharpness4),
 			  amp_boost_exp4) *
 		self->amp_boost_db_calc
 		;
@@ -493,9 +504,9 @@ static gboolean _process(GstBtAudioSynth* synth, GstBuffer* gstbuf, GstMapInfo* 
 		amp_boost;
 
 	  const v4sf time_to_rads = F2PI * freq_overtone;
-	  const v4sf inc = time_to_rads * (1.0f/rate);
+	  const v4sf inc = time_to_rads * secs_per_sample;
 	  
-	  const v4sf inc_rm = time_to_rads * self->ringmod_depth * (1.0f/rate);
+	  const v4sf inc_rm = inc * self->ringmod_depth;
 
 	  const v4sf f = {
 		overtone->accum_rads + inc[0],
@@ -509,27 +520,40 @@ static gboolean _process(GstBtAudioSynth* synth, GstBuffer* gstbuf, GstMapInfo* 
 		overtone->accum_rm_rads + inc_rm[0] + inc_rm[1] + inc_rm[2],
 		overtone->accum_rm_rads + inc_rm[0] + inc_rm[1] + inc_rm[2] + inc_rm[3]
 	  };
-		
-	  buf4[i] += hscale_amp * sin_ps_method(f) * powsin_ps(f_rm, V4SF_UNIT * self->ringmod_rate);
-	  
+
+	  const v4sf sample = hscale_amp * sin_ps_method(f) * powsin_ps(f_rm, V4SF_UNIT * self->ringmod_rate);
+	  buf4[i] += sample;
+
+	  const v4ui sample_is_silent = sample < tiny;
+	  first_sample_active = first_sample_active | (~sample_is_silent);
+	  all_samples_silent = all_samples_silent & sample_is_silent;
+
 	  overtone->accum_rads = f[3];
 	  overtone->accum_rm_rads = f_rm[3];
 	}
+
+	// If this condition holds true, then all further samples will also be silent.
+	// This is because after the first non-silent sample all others must either increase gain forever with each
+	// overtone, or decrease gain asymptotically to zero.
+	if (!v4ui_eq(first_sample_active, V4UI_ZERO) && v4ui_eq(all_samples_silent, V4UI_MAX))
+		break;
+	
 	overtone->accum_rm_rads = fmodf(overtone->accum_rm_rads, F2PI);
 	overtone->accum_rads = fmodf(overtone->accum_rads, F2PI);
   }
 
-  const v4sf* const vol_srate = (const v4sf*)srate_prop_buf_get(self, PROP_VOL);
+  const v4sf* const vol_srate = (v4sf*)srate_prop_buf_get(self, PROP_VOL);
   
   const gfloat fscale = 32768.0f * self->vol;
   for (int i = 0; i < nbuf4elements; ++i)
 	((v4ss*)info->data)[i] = __builtin_convertvector(buf4[i] * fscale * vol_srate[i], v4ss);
   
   struct timespec clock_end;
-  clock_gettime(CLOCK_THREAD_CPUTIME_ID, &clock_end);
-  self->time_accum += (clock_end.tv_sec - clock_start.tv_sec) * 1e9L +  (clock_end.tv_nsec - clock_start.tv_nsec);
-  if (++self->calls == 250) {
-	GST_INFO("Avg perf: %f samples/sec\n", 1.0f / (self->time_accum / 1e9f / (self->calls * nbuf4elements * 4)));
+  clock_gettime(CLOCK_MONOTONIC_RAW, &clock_end);
+  self->time_accum += (clock_end.tv_sec - clock_start.tv_sec) * 1e9L + (clock_end.tv_nsec - clock_start.tv_nsec);
+  self->calls += nbuf4elements * 4;
+  if (self->calls > rate) {
+	GST_INFO("Avg perf: %f samples/sec\n", self->calls / (self->time_accum / 1e9f));
 	self->time_accum = 0;
 	self->calls = 0;
   }
@@ -616,7 +640,7 @@ G_DIR_SEPARATOR_S "" PACKAGE "-gst" G_DIR_SEPARATOR_S "GstBtSimSyn.html");*/
   properties[PROP_OVERTONES] =
 	g_param_spec_uint("overtones", "Overtones", "", 0, MAX_OVERTONES, 10, flags);
   properties[PROP_FREQ_MAX] =
-	g_param_spec_float("freq-max", "Freq Max", "", 0, 44100, 44100, flags);
+	g_param_spec_float("freq-max", "Freq Max", "", 0, 22050, 22050, flags);
   properties[PROP_SUM_START_IDX] =
 	g_param_spec_int("sum-start-idx", "Sum Start Idx", "Sum Start Index", -10, 25, 1, flags);
   properties[PROP_AMP_POW_BASE] =
@@ -630,7 +654,7 @@ G_DIR_SEPARATOR_S "" PACKAGE "-gst" G_DIR_SEPARATOR_S "GstBtSimSyn.html");*/
   properties[PROP_AMPFREQ_SCALE_EXP] =
 	g_param_spec_float("ampfreq-scale-exp", "Ampfreq Scale Exp", "Amplitude + Frequency Scale Exponent", -10, 1, -1, flags);
   properties[PROP_AMP_BOOST_CENTER] =
-	g_param_spec_float("amp-boost-center", "AmpBoost Center", "", 0, 44100, 0, flags);
+	g_param_spec_float("amp-boost-center", "AmpBoost Center", "", 0, 22050, 0, flags);
   properties[PROP_AMP_BOOST_SHARPNESS] =
 	g_param_spec_float("amp-boost-sharpness", "AmpBoost Sharpness", "", 0, 200, 0, flags);
   properties[PROP_AMP_BOOST_EXP] =
@@ -664,8 +688,14 @@ G_DIR_SEPARATOR_S "" PACKAGE "-gst" G_DIR_SEPARATOR_S "GstBtSimSyn.html");*/
   v4sf b = {7,5,3,1};
   v4sf c = {7,5,4,6};
   v4sf r = maxf4(a, b);
+  v4sf x = bitselect_4f(a > b, a, b);
   g_assert(r[0] == c[0]);
   g_assert(r[1] == c[1]);
   g_assert(r[2] == c[2]);
   g_assert(r[3] == c[3]);
+  
+  g_assert(x[0] == c[0]);
+  g_assert(x[1] == c[1]);
+  g_assert(x[2] == c[2]);
+  g_assert(x[3] == c[3]);
 }

@@ -17,6 +17,7 @@
 */
 
 #include "src/envelope.h"
+#include "src/propsratecontrolsource.h"
 #include "src/math.h"
 #include "src/properties_simple.h"
 #include <gst/gstparamspecs.h>
@@ -53,7 +54,7 @@ struct _GstBtAdsr {
   BtPropertiesSimple* props;
 };
 
-G_DEFINE_TYPE(GstBtAdsr, gstbt_adsr, GST_TYPE_CONTROL_SOURCE);
+G_DEFINE_TYPE(GstBtAdsr, gstbt_adsr, gstbt_prop_srate_cs_get_type());
 
 static inline gfloat ab_select(gfloat a, gfloat b, GstClockTime timeb, GstClockTime time) {
   return bitselect_f(time < timeb, a, b);
@@ -131,25 +132,28 @@ static gboolean get_value_array(GstControlSource* self, GstClockTime timestamp, 
   return TRUE;
 }
 
-gfloat gstbt_adsr_get_value_f(GstBtAdsr* self, GstClockTime timestamp, gfloat* value) {
+gfloat gstbt_adsr_get_value_f(GstBtPropSrateControlSource* super, GstClockTime timestamp, gfloat* value) {
+  GstBtAdsr* self = (GstBtAdsr*)super;
   return get_value_inline(self, timestamp);
 }
 
-void gstbt_adsr_get_value_array_f(GstBtAdsr* self, GstClockTime timestamp, GstClockTime interval,
+void gstbt_adsr_get_value_array_f(GstBtPropSrateControlSource* super, GstClockTime timestamp, GstClockTime interval,
 								  guint n_values, gfloat* values) {
+  GstBtAdsr* self = (GstBtAdsr*)super;
   for (guint i = 0; i < n_values; ++i) {
 	values[i] = get_value_inline(self, timestamp);
 	timestamp += interval;
   }
 }
 
-gboolean gstbt_adsr_mod_value_array_f(GstBtAdsr* self, GstClockTime timestamp, GstClockTime interval,
+gboolean gstbt_adsr_mod_value_array_f(GstBtPropSrateControlSource* super, GstClockTime timestamp, GstClockTime interval,
 									  guint n_values, gfloat* values) {
-  gfloat accum = 0;
+  GstBtAdsr* self = (GstBtAdsr*)super;
+  guint accum = 0;
   for (guint i = 0; i < n_values; ++i) {
 	const gfloat val = get_value_inline(self, timestamp);
 	values[i] *= val;
-	accum += val;
+	accum = val && val != 0;
 	timestamp += interval;
   }
   return accum != 0;
@@ -168,12 +172,13 @@ static void dispose(GObject* obj) {
 }
 
 void gstbt_adsr_class_init(GstBtAdsrClass* const klass) {
-  GObjectClass* const gobject_class = (GObjectClass *) klass;
-  
+  GObjectClass* const gobject_class = (GObjectClass*)klass;
   gobject_class->dispose = dispose;
-  
-//  g_param_spec_uint("overtones", "Overtones", "", 0, MAX_OVERTONES, 10, flags);
-//	g_param_spec_float("ringmod-ot-offset", "Ringmod OT Offset", "Ring Modulation Overtone Offset", 0, 1, 0, flags);
+
+  GstBtPropSrateControlSourceClass* const klass_cs = (GstBtPropSrateControlSourceClass*)klass;
+  klass_cs->get_value_f = gstbt_adsr_get_value_f;
+  klass_cs->get_value_array_f = gstbt_adsr_get_value_array_f;
+  klass_cs->mod_value_array_f = gstbt_adsr_mod_value_array_f;
 }
 
 void gstbt_adsr_props_add(GObjectClass* const klass, const char* postfix, guint* idx) {
@@ -252,7 +257,7 @@ void gstbt_adsr_trigger(GstBtAdsr* const self, const GstClockTime time) {
   if (envelope_never_triggered) {
 	self->ts_zero_end = time;
   } else {
-	gstbt_adsr_get_value_f(self, time, &self->on_level);
+	gstbt_adsr_get_value_f((GstBtPropSrateControlSource*)self, time, &self->on_level);
 	self->ts_zero_end = time + (GstClockTime)(self->on_level * 0.05 * GST_SECOND);
   }
   
@@ -264,7 +269,7 @@ void gstbt_adsr_trigger(GstBtAdsr* const self, const GstClockTime time) {
 }
 
 void gstbt_adsr_off(GstBtAdsr* const self, const GstClockTime time) {
-  gstbt_adsr_get_value_f(self, time, &self->off_level);
+  gstbt_adsr_get_value_f((GstBtPropSrateControlSource*)self, time, &self->off_level);
   self->ts_attack_end = MIN(self->ts_attack_end, time);
   self->ts_decay_end = MIN(self->ts_decay_end, time);
   self->ts_release = time;

@@ -35,6 +35,8 @@ GCC is generally very good at vectorising loops when `-ffast-math` and `-ftree-l
 
 Julien Pommier's SSE math functions were even faster than GCC's trig function vectorisation. The biggest speed gain came from this.
 
+I tried an implementation using look up tables to generate sines, and even without interpolation it was only about as fast as the version using SSE sines.
+
 An example of how to examine generated assembly code to see how much has been vectorised:
 
 	gcc -DHAVE_CONFIG_H -I. -I.. -pthread -I../buzztrax-stable/include -I/usr/include/gstreamer-1.0 -I/usr/include/glib-2.0 -I/usr/lib/x86_64-linux-gnu/glib-2.0/include -O2 -ffast-math -lm -ftree-loop-vectorize -std=gnu99 -Werror -Wno-error=unused-variable -Wall -Wshadow -Wpointer-arith -Wstrict-prototypes -fvisibility=hidden -g -fPIC -DPIC -Wa,-adhln ../src/additive.c
