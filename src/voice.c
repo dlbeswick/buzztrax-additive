@@ -103,14 +103,18 @@ void gstbt_additivev_get_value_array_f_for_prop(
   gboolean* props_active,
   gboolean* props_controlled) {
 
-  if (self->idx_target_prop < self->n_parent_props) {
+  guint idx = self->idx_target_prop - 1;
+  if (idx < self->n_parent_props) {
 	gboolean any_nonzero = gstbt_prop_srate_cs_mod_value_array_f(
 	  (GstBtPropSrateControlSource*)self->adsr, timestamp, interval, n_values,
-	  values + n_values * self->idx_target_prop);
+	  values + n_values * idx);
 
-	props_active[self->idx_target_prop] = props_active[self->idx_target_prop] || any_nonzero;
-	props_controlled[self->idx_target_prop] = TRUE;
+	props_active[idx] = props_active[idx] || any_nonzero;
+	props_controlled[idx] = TRUE;
   }
+	
+  if (idx+1 == PROP_AMP_BOOST_CENTER)
+	GST_INFO("%f", values[idx * n_values]);
 }
 
 static void gstbt_additivev_init(GstBtAdditiveV* const self) {
