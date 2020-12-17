@@ -20,10 +20,10 @@
 
 G_DEFINE_ABSTRACT_TYPE(GstBtPropSrateControlSource, gstbt_prop_srate_cs, GST_TYPE_CONTROL_SOURCE);
 
-gfloat gstbt_prop_srate_cs_get_value_f(GstBtPropSrateControlSource* self, GstClockTime timestamp, gfloat* value) {
+void gstbt_prop_srate_cs_get_value_f(GstBtPropSrateControlSource* self, GstClockTime timestamp, gfloat* value) {
   GstBtPropSrateControlSourceClass* klass = GSTBT_PROP_SRATE_CONTROL_SOURCE_GET_CLASS(self);
   g_assert(klass->get_value_f != NULL);
-  return klass->get_value_f(self, timestamp, value);
+  klass->get_value_f(self, timestamp, value);
 }
 
 void gstbt_prop_srate_cs_get_value_array_f(GstBtPropSrateControlSource* self, GstClockTime timestamp,

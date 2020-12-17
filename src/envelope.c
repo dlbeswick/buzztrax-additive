@@ -95,6 +95,7 @@ static inline gfloat func_sustain(GstBtAdsr* const self) {
 }
 
 static inline gfloat func_release(GstBtAdsr* const self, const GstClockTime ts) {
+//  printf("%f %ld %ld %f\n", self->off_level, self->ts_release, ts, plerp(self->off_level, 0.0, self->ts_release, self->ts_off_end, ts, self->release_pow));
   return plerp(self->off_level, 0.0, self->ts_release, self->ts_off_end, ts, self->release_pow);
 }
 
@@ -132,9 +133,9 @@ static gboolean get_value_array(GstControlSource* self, GstClockTime timestamp, 
   return TRUE;
 }
 
-gfloat gstbt_adsr_get_value_f(GstBtPropSrateControlSource* super, GstClockTime timestamp, gfloat* value) {
+void gstbt_adsr_get_value_f(GstBtPropSrateControlSource* super, GstClockTime timestamp, gfloat* value) {
   GstBtAdsr* self = (GstBtAdsr*)super;
-  return get_value_inline(self, timestamp);
+  *value = get_value_inline(self, timestamp);
 }
 
 void gstbt_adsr_get_value_array_f(GstBtPropSrateControlSource* super, GstClockTime timestamp, GstClockTime interval,

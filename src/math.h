@@ -86,7 +86,19 @@ static inline gfloat clamp(gfloat x, gfloat min, gfloat max) {
   return bitselect_f(result > max, max, result);
 }
 
+static inline gfloat lerp(const gfloat a, const gfloat b, const gfloat alpha) {
+  return a + (b-a) * alpha;
+}
+
+static inline v4sf lerp4f(const v4sf a, const v4sf b, const v4sf alpha) {
+  return a + (b-a) * alpha;
+}
+
 static inline gfloat db_to_gain(gfloat db) {
   return powf(10.0f, db / 20.0f);
 }
 
+static inline gfloat abs_fracf(gfloat f) {
+  gfloat i;
+  return fabs(modff(f, &i));
+}

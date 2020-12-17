@@ -37,7 +37,7 @@ G_DECLARE_DERIVABLE_TYPE(GstBtPropSrateControlSource, gstbt_prop_srate_cs, GSTBT
 struct _GstBtPropSrateControlSourceClass {
   GstControlSourceClass parent;
 
-  gfloat (*get_value_f)(GstBtPropSrateControlSource* self, GstClockTime timestamp, gfloat* value);
+  void (*get_value_f)(GstBtPropSrateControlSource* self, GstClockTime timestamp, gfloat* value);
   void (*get_value_array_f)(GstBtPropSrateControlSource* self, GstClockTime timestamp, GstClockTime interval,
 							guint n_values, gfloat* values);
 
@@ -46,7 +46,7 @@ struct _GstBtPropSrateControlSourceClass {
 								guint n_values, gfloat* values);
 };
 
-gfloat gstbt_prop_srate_cs_get_value_f(GstBtPropSrateControlSource* self, GstClockTime timestamp, gfloat* value);
+void gstbt_prop_srate_cs_get_value_f(GstBtPropSrateControlSource* self, GstClockTime timestamp, gfloat* value);
 void gstbt_prop_srate_cs_get_value_array_f(GstBtPropSrateControlSource* self, GstClockTime timestamp,
 										   GstClockTime interval, guint n_values, gfloat* values);
 gboolean gstbt_prop_srate_cs_mod_value_array_f(GstBtPropSrateControlSource* self, GstClockTime timestamp,

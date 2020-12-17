@@ -312,10 +312,6 @@ static void _get_property (GObject * object, guint prop_id, GValue * value, GPar
   }
 }
 
-static inline v4sf lerp_ps(const v4sf a, const v4sf b, const v4sf alpha) {
-  return a + (b-a) * alpha;
-}
-
 // Domain: [0, 683565275.5764316]
 // No performance benefit was recorded compared to fast sin.
 // LUT size doesn't seem to affect performance.
@@ -397,8 +393,23 @@ inline static gfloat* srate_prop_buf_get(const GstBtAdditive* const self, PropsS
 }
 
 static void srate_props_fill(GstBtAdditive* const self, GstClockTime timestamp, GstClockTime interval) {
-  for (guint i = 0; i < self->parent.generate_samples_per_buffer * N_PROPERTIES_SRATE; ++i)
-	self->buf_srate_props[i] = 1.0f;
+  /*for (guint i = 0; i < self->parent.generate_samples_per_buffer * N_PROPERTIES_SRATE; ++i) {
+	GValue src = G_VALUE_INIT;
+	g_object_get_property((GObject*)self, properties[i]->name, &src);
+
+	GValue dst = G_VALUE_INIT;
+	g_value_init(&dst, G_TYPE_FLOAT);
+	g_value_transform(&src, &dst);
+
+	g_value_unset(&src);
+	
+	gfloat value = g_value_get_float(dst);
+	
+	g_value_unset(&dst);
+	
+	for (guint j = 0; j < self->parent.generate_samples_per_buffer; ++j)
+	  self->buf_srate_props[i * self->parent.generate_samples_per_buffer + j] = value;
+	  }*/
 
   memset(self->props_srate_nonzero, 0, sizeof(self->props_srate_nonzero));
   memset(self->props_srate_controlled, 0, sizeof(self->props_srate_controlled));
@@ -437,7 +448,19 @@ static gboolean _process(GstBtAudioSynth* synth, GstBuffer* gstbuf, GstMapInfo* 
 	gstbt_additivev_process(self->voices[i], gstbuf);
   }
 
+  const gfloat freq_note = (gfloat)gstbt_tone_conversion_translate_from_number(self->tones, self->note);
+
+  const int nbufelements = synth->generate_samples_per_buffer;
+  for (guint i = 0; i < nbufelements * N_PROPERTIES_SRATE; ++i) {
+	self->buf_srate_props[i] = 1.0f;
+  }
+
   srate_props_fill(self, synth->running_time, 1e9L / rate);
+  
+  for (guint i = 0; i < nbufelements; ++i) {
+	self->buf_srate_props[PROP_BEND * nbufelements + i] =
+	  freq_note + freq_note * self->bend * self->buf_srate_props[PROP_BEND * nbufelements + i];
+  }
   
   if (is_machine_silent(self)) {
 	memset(info->data, 0, synth->generate_samples_per_buffer * sizeof(guint16));
@@ -447,11 +470,9 @@ static gboolean _process(GstBtAudioSynth* synth, GstBuffer* gstbuf, GstMapInfo* 
   }
   
   v4sf* const buf4 = (v4sf*)self->buf;
-  const int nbuf4elements = synth->generate_samples_per_buffer/4;
+  const int nbuf4elements = nbufelements/4;
 
   memset(buf4, 0, nbuf4elements*sizeof(typeof(*buf4)));
-
-  const gfloat freq_note = (gfloat)gstbt_tone_conversion_translate_from_number(self->tones, self->note);
 
   const v4sf tiny = V4SF_UNIT * 1e-6f; // note: also -120db
   const v4sf freq_max4 = V4SF_UNIT * self->freq_max;
@@ -466,8 +487,6 @@ static gboolean _process(GstBtAudioSynth* synth, GstBuffer* gstbuf, GstMapInfo* 
   const v4sf amp_exp_idx_mul4 = V4SF_UNIT * self->amp_exp_idx_mul;
   const v4sf ampfreq_scale_exp4 = V4SF_UNIT * self->ampfreq_scale_exp;
 
-  v4ui first_sample_active = V4UI_ZERO;
-  
   for (int j = self->sum_start_idx, idx_o = 0; idx_o < self->overtones; ++j, ++idx_o) {
 	g_assert(idx_o < MAX_OVERTONES);
 	const v4sf hscale_freq = maxf4(ampfreq_scale_idx_mul4 * (gfloat)j + self->ampfreq_scale_offset, tiny);
@@ -477,10 +496,8 @@ static gboolean _process(GstBtAudioSynth* synth, GstBuffer* gstbuf, GstMapInfo* 
 	const v4sf* const srate_bend = (const v4sf*)srate_prop_buf_get(self, PROP_BEND);
 	const v4sf* const srate_amp_boost_center = (const v4sf*)srate_prop_buf_get(self, PROP_AMP_BOOST_CENTER);
 
-	v4ui all_samples_silent = V4UI_MAX;
-	
 	for (int i = 0; i < nbuf4elements; ++i) {
-	  const v4sf freq_note_bent = freq_note4 + freq_note4_bend4 * srate_bend[i];
+	  const v4sf freq_note_bent = srate_bend[i];
 
 	  const v4sf freq_overtone = freq_note_bent * hscale_freq;
 	
@@ -521,23 +538,12 @@ static gboolean _process(GstBtAudioSynth* synth, GstBuffer* gstbuf, GstMapInfo* 
 		overtone->accum_rm_rads + inc_rm[0] + inc_rm[1] + inc_rm[2] + inc_rm[3]
 	  };
 
-	  const v4sf sample = hscale_amp * sin_ps_method(f) * powsin_ps(f_rm, V4SF_UNIT * self->ringmod_rate);
-	  buf4[i] += sample;
-
-	  const v4ui sample_is_silent = sample < tiny;
-	  first_sample_active = first_sample_active | (~sample_is_silent);
-	  all_samples_silent = all_samples_silent & sample_is_silent;
+	  buf4[i] += hscale_amp * sin_ps_method(f) * powsin_ps(f_rm, V4SF_UNIT * self->ringmod_rate);
 
 	  overtone->accum_rads = f[3];
 	  overtone->accum_rm_rads = f_rm[3];
 	}
 
-	// If this condition holds true, then all further samples will also be silent.
-	// This is because after the first non-silent sample all others must either increase gain forever with each
-	// overtone, or decrease gain asymptotically to zero.
-	if (!v4ui_eq(first_sample_active, V4UI_ZERO) && v4ui_eq(all_samples_silent, V4UI_MAX))
-		break;
-	
 	overtone->accum_rm_rads = fmodf(overtone->accum_rm_rads, F2PI);
 	overtone->accum_rads = fmodf(overtone->accum_rads, F2PI);
   }
@@ -668,7 +674,7 @@ G_DIR_SEPARATOR_S "" PACKAGE "-gst" G_DIR_SEPARATOR_S "GstBtSimSyn.html");*/
   properties[PROP_RINGMOD_OT_OFFSET] =
 	g_param_spec_float("ringmod-ot-offset", "Ringmod OT Offset", "Ring Modulation Overtone Offset", 0, 1, 0, flags);
   properties[PROP_BEND] =
-	g_param_spec_float("bend", "Bend", "", -1, 1, 0, flags);
+	g_param_spec_float("bend", "Bend", "", -1000, 1000, 0, flags);
   properties[PROP_VOL] =
 	g_param_spec_float("vol", "vol", "", 0, 1, 0.5, flags);
   properties[PROP_NOTE] =
