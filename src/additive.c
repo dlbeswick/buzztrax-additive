@@ -331,7 +331,8 @@ static inline v4sf sin_ps_lut(const v4sf x) {
 }
 
 static inline v4sf sin_ps_method(const v4sf x) {
-  return sin_ps(x);
+  return sin_ps2(x);
+//  return sin_ps(x);
 //  return _ZGVbN4v_sinf(x);
 }
 
@@ -345,7 +346,7 @@ static inline v4sf sin01_ps(const v4sf x) {
 }
 
 static inline v4sf pow_ps(const v4sf base, const v4sf exponent) {
-  const v4ui base_isneg = base < 0.0f;
+  const v4si base_isneg = base < 0.0f;
   const v4sf base_nonneg = bitselect4f(base_isneg, -base, base);
   const v4sf r = exp_ps(exponent*log_ps(base_nonneg));
   return bitselect4f(
@@ -713,8 +714,30 @@ G_DIR_SEPARATOR_S "" PACKAGE "-gst" G_DIR_SEPARATOR_S "GstBtSimSyn.html");*/
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wunused-function"
 static void test(void) {
-  v4sf input = {-1.0f, 0.0f, 0.0f, 2.0f};
-  v4sf expected = {0.5f, 1.0f, 1.0f, 4.0f};
-  g_assert(v4sf_eq(pow_ps(2 * V4SF_UNIT, input), expected));
+  {
+	v4sf input = {-1.0f, 0.0f, 0.0f, 2.0f};
+	v4sf expected = {0.5f, 1.0f, 1.0f, 4.0f};
+	g_assert(v4sf_eq(pow_ps(2 * V4SF_UNIT, input), expected));
+  }
+
+  {
+	v4sf input = {-1.0f, 1.0f, 100.5f, -100.5f};
+	v4sf expected = {1.0f, 1.0f, 100.5f, 100.5f};
+	g_assert(v4sf_eq(abs4f(input), expected));
+  }
+
+  {
+	v4si inputa = {1, 2, 3, 4};
+	v4si inputb = {100, 200, 300, 400};
+	v4si expected = {1, 2, 300, 400};
+	g_assert(v4si_eq(bitselect4(inputa <= 2, inputa, inputb), expected));
+  }
+  
+  {
+	v4sf inputa = {1.0f, 2.0f, 3.0f, 4.0f};
+	v4sf inputb = {100.0f, 200.0f, 300.0f, 400.0f};
+	v4sf expected = {1.0f, 2.0f, 300.0f, 400.0f};
+	g_assert(v4sf_eq(bitselect4f(inputa <= 2, inputa, inputb), expected));
+  }
 }
 #pragma GCC diagnostic pop
