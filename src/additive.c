@@ -35,6 +35,8 @@
 #include <stdio.h>
 #include <unistd.h>
 
+static void test(void);
+
 GType gstbt_additive_get_type(void);
 #define GSTBT_ADDITIVE(obj) (G_TYPE_CHECK_INSTANCE_CAST((obj),gstbt_additive_get_type(),GstBtAdditive))
 
@@ -342,20 +344,27 @@ static inline v4sf sin01_ps(const v4sf x) {
   return (1.0f + sin_ps_method(x)) * 0.5f;
 }
 
-static inline v4sf pow_posexp_ps(const v4sf x, const v4sf vexp) {
-  return exp_ps(vexp*log_ps(x));
+static inline v4sf pow_ps(const v4sf base, const v4sf exponent) {
+  const v4ui base_isneg = base < 0.0f;
+  const v4sf base_nonneg = bitselect4f(base_isneg, -base, base);
+  const v4sf r = exp_ps(exponent*log_ps(base_nonneg));
+  return bitselect4f(
+	base == V4SF_ZERO,
+	V4SF_ZERO,
+	bitselect4f(base_isneg, 1.0f / r, r)
+	);
+}
+
+static inline v4sf pow_ps_method(const v4sf x, const v4sf vexp) {
+  return pow_ps(x, vexp);
+//  return powf4(x, vexp);
 }
 
 // Take a sin with range 0 -> 1 and exponentiate to 'vexp' power
 // Return the result normalized back to -1 -> 1 range.
 // A way of waveshaping using non-odd powers?
 static inline v4sf powsin_ps(const v4sf x, const v4sf vexp) {
-  // tbd: inline _ZGVbN4vv_powf?
-  // tbd: use loop to avoid use of _ZGVbN4vv_powf? check that it will vectorize.
-  return (_ZGVbN4vv_powf(sin01_ps(x), vexp) - 0.5f) * 2.0f;
-
-// faster, but crackling
-//  return (pow_posexp_ps(sin01_ps(x), vexp) - 0.5f) * 2.0f;
+  return (pow_ps_method(sin01_ps(x), vexp) - 0.5f) * 2.0f;
 }
 
 #if 0
@@ -380,12 +389,15 @@ static inline gfloat window_sharp_cosine(gfloat sample, gfloat sample_center, gf
 	);
 }
 
-static inline v4sf window_sharp_cosine4(v4sf sample, v4sf sample_center, v4sf rate, v4sf sharpness) {
-  v4sf result;
-  for (guint i = 0; i < 4; ++i) {
-	result[i] = window_sharp_cosine(sample[i], sample_center[i], rate[i], sharpness[i]);
-  }
-  return result;
+static inline v4sf window_sharp_cosine4(v4sf sample, v4sf sample_center, gfloat rate, v4sf sharpness) {
+  return bitselect4f(
+	sharpness == 0.0f,
+	V4SF_ZERO,
+	0.5f +
+	-0.5f * cos_ps(F2PI * clamp4f(sharpness * (sample + rate/2.0f/sharpness - sample_center) / rate,
+								  V4SF_ZERO,
+								  V4SF_UNIT))
+	);
 }
 
 static gfloat* srate_prop_buf_get(const GstBtAdditive* const self, PropsSrate prop) {
@@ -401,6 +413,7 @@ static gboolean srate_prop_is_nonzero(const GstBtAdditive* const self, PropsSrat
 }
 
 static void srate_props_fill(GstBtAdditive* const self, const GstClockTime timestamp, const GstClockTime interval) {
+  const guint nbufelements = self->parent.generate_samples_per_buffer;
   for (guint i = 0; i < N_PROPERTIES_SRATE; ++i) {
 	GValue src = G_VALUE_INIT;
 	g_value_init(&src, G_TYPE_FLOAT);
@@ -409,7 +422,7 @@ static void srate_props_fill(GstBtAdditive* const self, const GstClockTime times
 	gfloat value = g_value_get_float(&src);
 	g_value_unset(&src);
 
-	gfloat* const sratebuf = &self->buf_srate_props[i * self->parent.generate_samples_per_buffer];
+	gfloat* const sratebuf = &self->buf_srate_props[i * nbufelements];
 	for (guint j = 0; j < self->parent.generate_samples_per_buffer; ++j)
 	  sratebuf[j] = value;
   }
@@ -417,12 +430,18 @@ static void srate_props_fill(GstBtAdditive* const self, const GstClockTime times
   memset(self->props_srate_nonzero, 0, sizeof(self->props_srate_nonzero));
   memset(self->props_srate_controlled, 0, sizeof(self->props_srate_controlled));
   
+  // Fill this srate buffer with the calculated db-to-gain value.
+  gfloat* const srate_amp_boost_db = srate_prop_buf_get(self, PROP_AMP_BOOST_DB);
+  for (guint i = 0; i < nbufelements; ++i) {
+	srate_amp_boost_db[i] = self->amp_boost_db_calc;
+  }
+  
   for (guint i = 0; i < self->n_voices; ++i) {
 	gstbt_additivev_get_value_array_f_for_prop(
 	  self->voices[i],
 	  timestamp,
 	  interval,
-	  self->parent.generate_samples_per_buffer,
+	  nbufelements,
 	  self->buf_srate_props,
 	  self->props_srate_nonzero,
 	  self->props_srate_controlled
@@ -475,19 +494,19 @@ static gboolean _process(GstBtAudioSynth* synth, GstBuffer* gstbuf, GstMapInfo* 
   memset(buf4, 0, nbuf4elements*sizeof(typeof(*buf4)));
 
   const v4sf tiny = V4SF_UNIT * 1e-6f; // note: also -120db
-  const v4sf freq_limit = V4SF_UNIT * 22050.0f;
 
   const v4sf* const srate_freq_max = (v4sf*)srate_prop_buf_get(self, PROP_FREQ_MAX);
   const v4sf* const srate_ampfreq_scale_idx_mul = (v4sf*)srate_prop_buf_get(self, PROP_AMPFREQ_SCALE_IDX_MUL);
+  const v4sf* const srate_amp_boost_center = (v4sf*)srate_prop_buf_get(self, PROP_AMP_BOOST_CENTER);
   const v4sf* const srate_amp_boost_sharpness = (v4sf*)srate_prop_buf_get(self, PROP_AMP_BOOST_SHARPNESS);
   const v4sf* const srate_amp_boost_exp = (v4sf*)srate_prop_buf_get(self, PROP_AMP_BOOST_EXP);
+  const v4sf* const srate_amp_boost_db = (v4sf*)srate_prop_buf_get(self, PROP_AMP_BOOST_DB);
   const v4sf* const srate_amp_pow_base = (v4sf*)srate_prop_buf_get(self, PROP_AMP_POW_BASE);
   const v4sf* const srate_amp_exp_idx_mul = (v4sf*)srate_prop_buf_get(self, PROP_AMP_EXP_IDX_MUL);
   const v4sf* const srate_ampfreq_scale_offset = (v4sf*)srate_prop_buf_get(self, PROP_AMPFREQ_SCALE_OFFSET);
   const v4sf* const srate_ampfreq_scale_exp = (v4sf*)srate_prop_buf_get(self, PROP_AMPFREQ_SCALE_EXP);
-  const v4sf* const srate_amp_boost_center = (const v4sf*)srate_prop_buf_get(self, PROP_AMP_BOOST_CENTER);
-  const v4sf* const srate_ringmod_rate = (const v4sf*)srate_prop_buf_get(self, PROP_RINGMOD_RATE);
-  const v4sf* const srate_ringmod_depth = (const v4sf*)srate_prop_buf_get(self, PROP_RINGMOD_DEPTH);
+  const v4sf* const srate_ringmod_rate = (v4sf*)srate_prop_buf_get(self, PROP_RINGMOD_RATE);
+  const v4sf* const srate_ringmod_depth = (v4sf*)srate_prop_buf_get(self, PROP_RINGMOD_DEPTH);
 
   for (int j = self->sum_start_idx, idx_o = 0; idx_o < self->overtones; ++j, ++idx_o) {
 	g_assert(idx_o < MAX_OVERTONES);
@@ -500,22 +519,22 @@ static gboolean _process(GstBtAudioSynth* synth, GstBuffer* gstbuf, GstMapInfo* 
 	  const v4sf freq_overtone = freq_note_bent * hscale_freq;
 	
 	  // Limit the number of overtones to reduce aliasing.
-	  const v4sf alias_mute = bitselect_4f(freq_overtone > srate_freq_max[i], V4SF_ZERO, V4SF_UNIT);
+	  const v4sf alias_mute = bitselect4f(freq_overtone > srate_freq_max[i], V4SF_ZERO, V4SF_UNIT);
 	
 	  const v4sf amp_boost =
 		alias_mute +
-		powf4(window_sharp_cosine4(
-				freq_overtone,
-				srate_amp_boost_center[i],
-				freq_limit,
-				srate_amp_boost_sharpness[i]),
-			  srate_amp_boost_exp[i]) *
-		self->amp_boost_db_calc
+		pow_ps_method(window_sharp_cosine4(
+						freq_overtone,
+						srate_amp_boost_center[i],
+						22050.0,
+						srate_amp_boost_sharpness[i]),
+					  srate_amp_boost_exp[i]) *
+		srate_amp_boost_db[i]
 		;
-	
+
 	  const v4sf hscale_amp =
-		powf4(srate_amp_pow_base[i], (gfloat)j * srate_amp_exp_idx_mul[i]) *
-		powf4(hscale_freq, srate_ampfreq_scale_exp[i]) *
+		pow_ps_method(srate_amp_pow_base[i], (gfloat)j * srate_amp_exp_idx_mul[i]) *
+		pow_ps_method(hscale_freq, srate_ampfreq_scale_exp[i]) *
 		amp_boost;
 
 	  const v4sf time_to_rads = F2PI * freq_overtone;
@@ -688,18 +707,14 @@ G_DIR_SEPARATOR_S "" PACKAGE "-gst" G_DIR_SEPARATOR_S "GstBtSimSyn.html");*/
 	lut_sin[i] = (gfloat)sin(G_PI * 2 * ((double)i / (sizeof(lut_sin) / sizeof(typeof(lut_sin)))));
   }
 
-  v4sf a = {0,2,4,6};
-  v4sf b = {7,5,3,1};
-  v4sf c = {7,5,4,6};
-  v4sf r = maxf4(a, b);
-  v4sf x = bitselect_4f(a > b, a, b);
-  g_assert(r[0] == c[0]);
-  g_assert(r[1] == c[1]);
-  g_assert(r[2] == c[2]);
-  g_assert(r[3] == c[3]);
-  
-  g_assert(x[0] == c[0]);
-  g_assert(x[1] == c[1]);
-  g_assert(x[2] == c[2]);
-  g_assert(x[3] == c[3]);
+  test();
 }
+
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-function"
+static void test(void) {
+  v4sf input = {-1.0f, 0.0f, 0.0f, 2.0f};
+  v4sf expected = {0.5f, 1.0f, 1.0f, 4.0f};
+  g_assert(v4sf_eq(pow_ps(2 * V4SF_UNIT, input), expected));
+}
+#pragma GCC diagnostic pop

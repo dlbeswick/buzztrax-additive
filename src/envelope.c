@@ -75,7 +75,7 @@ static inline gfloat plerp(gfloat a, gfloat b,
 						   gfloat exp) {
   
   const gfloat alpha = clamp((float)(time - timea) / (timeb - timea), 0.0f, 1.0f);
-  return a + (b-a) * pow(alpha, exp);
+  return a + (b-a) * powf(alpha, exp);
 }
 
 static inline gfloat func_reset(GstBtAdsr* const self, const GstClockTime ts) {
