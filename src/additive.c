@@ -35,8 +35,6 @@
 #include <stdio.h>
 #include <unistd.h>
 
-static void test(void);
-
 GType gstbt_additive_get_type(void);
 #define GSTBT_ADDITIVE(obj) (G_TYPE_CHECK_INSTANCE_CAST((obj),gstbt_additive_get_type(),GstBtAdditive))
 
@@ -146,16 +144,16 @@ G_DEFINE_TYPE_WITH_CODE (
 
 static gboolean plugin_init(GstPlugin * plugin) {
   GST_DEBUG_CATEGORY_INIT(
-	GST_CAT_DEFAULT,
-	G_STRINGIFY(GST_CAT_DEFAULT),
-	GST_DEBUG_FG_WHITE | GST_DEBUG_BG_BLACK,
-	GST_MACHINE_DESC);
+    GST_CAT_DEFAULT,
+    G_STRINGIFY(GST_CAT_DEFAULT),
+    GST_DEBUG_FG_WHITE | GST_DEBUG_BG_BLACK,
+    GST_MACHINE_DESC);
 
   return gst_element_register(
-	plugin,
-	GST_MACHINE_NAME,
-	GST_RANK_NONE,
-	gstbt_additive_get_type());
+    plugin,
+    GST_MACHINE_NAME,
+    GST_RANK_NONE,
+    gstbt_additive_get_type());
 }
 
 GST_PLUGIN_DEFINE(
@@ -171,82 +169,82 @@ static void _set_property (GObject * object, guint prop_id, const GValue * value
 
   switch (prop_id) {
   case PROP_CHILDREN:
-	self->n_voices = g_value_get_ulong(value);
-	break;
+    self->n_voices = g_value_get_ulong(value);
+    break;
   case PROP_NOTE: {
-	GstBtNote note = g_value_get_enum(value);
-	if (note == GSTBT_NOTE_OFF) {
-	  for (guint i = 0; i < self->n_voices; ++i) {
-		gstbt_additivev_note_off(self->voices[i], self->parent.running_time);
-	  }
-	} else if (note != GSTBT_NOTE_NONE) {
-	  self->note = note;
-	  for (guint i = 0; i < self->n_voices; ++i) {
-		gstbt_additivev_note_on(self->voices[i], self->parent.running_time);
-	  }
-	}
-	break;
+    GstBtNote note = g_value_get_enum(value);
+    if (note == GSTBT_NOTE_OFF) {
+      for (guint i = 0; i < self->n_voices; ++i) {
+        gstbt_additivev_note_off(self->voices[i], self->parent.running_time);
+      }
+    } else if (note != GSTBT_NOTE_NONE) {
+      self->note = note;
+      for (guint i = 0; i < self->n_voices; ++i) {
+        gstbt_additivev_note_on(self->voices[i], self->parent.running_time);
+      }
+    }
+    break;
   }
   case PROP_OVERTONES:
-	self->overtones = g_value_get_uint(value);
-	break;
+    self->overtones = g_value_get_uint(value);
+    break;
   case PROP_FREQ_MAX:
-	self->freq_max = g_value_get_float(value);
-	break;
+    self->freq_max = g_value_get_float(value);
+    break;
   case PROP_SUM_START_IDX:
-	self->sum_start_idx = g_value_get_int(value);
-	break;
+    self->sum_start_idx = g_value_get_int(value);
+    break;
   case PROP_AMP_POW_BASE:
-	self->amp_pow_base = g_value_get_float(value);
-	break;
+    self->amp_pow_base = g_value_get_float(value);
+    break;
   case PROP_AMP_EXP_IDX_MUL:
-	self->amp_exp_idx_mul = g_value_get_float(value);
-	break;
+    self->amp_exp_idx_mul = g_value_get_float(value);
+    break;
   case PROP_AMPFREQ_SCALE_IDX_MUL:
-	self->ampfreq_scale_idx_mul = g_value_get_float(value);
-	break;
+    self->ampfreq_scale_idx_mul = g_value_get_float(value);
+    break;
   case PROP_AMPFREQ_SCALE_OFFSET:
-	self->ampfreq_scale_offset = g_value_get_float(value);
-	break;
+    self->ampfreq_scale_offset = g_value_get_float(value);
+    break;
   case PROP_AMPFREQ_SCALE_EXP:
-	self->ampfreq_scale_exp = g_value_get_float(value);
-	break;
+    self->ampfreq_scale_exp = g_value_get_float(value);
+    break;
   case PROP_AMP_BOOST_CENTER:
-	self->amp_boost_center = g_value_get_float(value);
-	break;
+    self->amp_boost_center = g_value_get_float(value);
+    break;
   case PROP_AMP_BOOST_SHARPNESS:
-	self->amp_boost_sharpness = g_value_get_float(value);
-	break;
+    self->amp_boost_sharpness = g_value_get_float(value);
+    break;
   case PROP_AMP_BOOST_EXP:
-	self->amp_boost_exp = g_value_get_float(value);
-	break;
+    self->amp_boost_exp = g_value_get_float(value);
+    break;
   case PROP_AMP_BOOST_DB:
-	self->amp_boost_db = g_value_get_float(value);
-	self->amp_boost_db_calc = db_to_gain(g_value_get_float(value));
-	break;
+    self->amp_boost_db = g_value_get_float(value);
+    self->amp_boost_db_calc = db_to_gain(g_value_get_float(value));
+    break;
   case PROP_RINGMOD_RATE:
-	self->ringmod_rate = g_value_get_float(value);
-	break;
+    self->ringmod_rate = g_value_get_float(value);
+    break;
   case PROP_RINGMOD_DEPTH:
-	self->ringmod_depth = g_value_get_float(value);
-	break;
+    self->ringmod_depth = g_value_get_float(value);
+    break;
   case PROP_RINGMOD_OT_OFFSET:
-	self->ringmod_ot_offset = g_value_get_float(value);
-	self->ringmod_ot_offset_calc = self->ringmod_ot_offset * F2PI;
-	for (int i = 0; i < MAX_OVERTONES; ++i) {
-	  self->states_overtone[i].accum_rads = self->ringmod_ot_offset_calc;
-	  self->states_overtone[i].accum_rm_rads = self->ringmod_ot_offset_calc;
-	}
-	break;
+    self->ringmod_ot_offset = g_value_get_float(value);
+    self->ringmod_ot_offset_calc = self->ringmod_ot_offset * F2PI;
+    for (int i = 0; i < MAX_OVERTONES; ++i) {
+      self->states_overtone[i].accum_rads = self->ringmod_ot_offset_calc;
+      self->states_overtone[i].accum_rm_rads = self->ringmod_ot_offset_calc;
+    }
+    break;
   case PROP_BEND:
-	self->bend = g_value_get_float(value);
-	break;
+    self->bend = g_value_get_float(value);
+    break;
   case PROP_VOL:
-	self->vol = g_value_get_float(value);
-	break;
+    self->vol = g_value_get_float(value);
+    break;
   default:
-	G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
-	break;
+    G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
+    break;
   }
 }
 
@@ -255,62 +253,62 @@ static void _get_property (GObject * object, guint prop_id, GValue * value, GPar
 
   switch (prop_id) {
   case PROP_CHILDREN:
-	g_value_set_ulong(value, self->n_voices);
-	break;
+    g_value_set_ulong(value, self->n_voices);
+    break;
   case PROP_OVERTONES:
-	g_value_set_uint(value, self->overtones);
-	break;
+    g_value_set_uint(value, self->overtones);
+    break;
   case PROP_FREQ_MAX:
-	g_value_set_float(value, self->freq_max);
-	break;
+    g_value_set_float(value, self->freq_max);
+    break;
   case PROP_SUM_START_IDX:
-	g_value_set_int(value, self->sum_start_idx);
-	break;
+    g_value_set_int(value, self->sum_start_idx);
+    break;
   case PROP_AMP_POW_BASE:
-	g_value_set_float(value, self->amp_pow_base);
-	break;
+    g_value_set_float(value, self->amp_pow_base);
+    break;
   case PROP_AMP_EXP_IDX_MUL:
-	g_value_set_float(value, self->amp_exp_idx_mul);
-	break;
+    g_value_set_float(value, self->amp_exp_idx_mul);
+    break;
   case PROP_AMPFREQ_SCALE_IDX_MUL:
-	g_value_set_float(value, self->ampfreq_scale_idx_mul);
-	break;
+    g_value_set_float(value, self->ampfreq_scale_idx_mul);
+    break;
   case PROP_AMPFREQ_SCALE_OFFSET:
-	g_value_set_float(value, self->ampfreq_scale_offset);
-	break;
+    g_value_set_float(value, self->ampfreq_scale_offset);
+    break;
   case PROP_AMPFREQ_SCALE_EXP:
-	g_value_set_float(value, self->ampfreq_scale_exp);
-	break;
+    g_value_set_float(value, self->ampfreq_scale_exp);
+    break;
   case PROP_AMP_BOOST_CENTER:
-	g_value_set_float(value, self->amp_boost_center);
-	break;
+    g_value_set_float(value, self->amp_boost_center);
+    break;
   case PROP_AMP_BOOST_SHARPNESS:
-	g_value_set_float(value, self->amp_boost_sharpness);
-	break;
+    g_value_set_float(value, self->amp_boost_sharpness);
+    break;
   case PROP_AMP_BOOST_EXP:
-	g_value_set_float(value, self->amp_boost_exp);
-	break;
+    g_value_set_float(value, self->amp_boost_exp);
+    break;
   case PROP_AMP_BOOST_DB:
-	g_value_set_float(value, self->amp_boost_db);
-	break;
+    g_value_set_float(value, self->amp_boost_db);
+    break;
   case PROP_RINGMOD_RATE:
-	g_value_set_float(value, self->ringmod_rate);
-	break;
+    g_value_set_float(value, self->ringmod_rate);
+    break;
   case PROP_RINGMOD_DEPTH:
-	g_value_set_float(value, self->ringmod_depth);
-	break;
+    g_value_set_float(value, self->ringmod_depth);
+    break;
   case PROP_RINGMOD_OT_OFFSET:
-	g_value_set_float(value, self->ringmod_ot_offset);
-	break;
+    g_value_set_float(value, self->ringmod_ot_offset);
+    break;
   case PROP_BEND:
-	g_value_set_float(value, self->bend);
-	break;
+    g_value_set_float(value, self->bend);
+    break;
   case PROP_VOL:
-	g_value_set_float(value, self->vol);
-	break;
+    g_value_set_float(value, self->vol);
+    break;
   default:
-	G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
-	break;
+    G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
+    break;
   }
 }
 
@@ -331,8 +329,8 @@ static inline v4sf sin_ps_lut(const v4sf x) {
 }
 
 static inline v4sf sin_ps_method(const v4sf x) {
-  return sin_ps2(x);
-//  return sin_ps(x);
+//  return sin_ps2(x);
+  return sin_ps(x);
 //  return _ZGVbN4v_sinf(x);
 }
 
@@ -345,20 +343,9 @@ static inline v4sf sin01_ps(const v4sf x) {
   return (1.0f + sin_ps_method(x)) * 0.5f;
 }
 
-static inline v4sf pow_ps(const v4sf base, const v4sf exponent) {
-  const v4si base_isneg = base < 0.0f;
-  const v4sf base_nonneg = bitselect4f(base_isneg, -base, base);
-  const v4sf r = exp_ps(exponent*log_ps(base_nonneg));
-  return bitselect4f(
-	base == V4SF_ZERO,
-	V4SF_ZERO,
-	bitselect4f(base_isneg, 1.0f / r, r)
-	);
-}
-
 static inline v4sf pow_ps_method(const v4sf x, const v4sf vexp) {
-  return pow_ps(x, vexp);
-//  return powf4(x, vexp);
+  return powf4(x, vexp);
+//  return _ZGVbN4vv_powf(x, vexp);
 }
 
 // Take a sin with range 0 -> 1 and exponentiate to 'vexp' power
@@ -372,10 +359,10 @@ static inline v4sf powsin_ps(const v4sf x, const v4sf vexp) {
 static gfloat flcm(const gfloat a, const gfloat b) {
   gfloat i = MAX(a,b);
   for (gfloat x = i; x < FLT_MAX; x += i) {
-	if (roundf(x / a) - (x / a) < 0.000001f && roundf(x / b) - (x / b) < 0.000001f)
-	  return x;
-	else
-	  x += i;
+    if (roundf(x / a) - (x / a) < 0.000001f && roundf(x / b) - (x / b) < 0.000001f)
+      return x;
+    else
+      x += i;
   }
   return INFINITY;
 }
@@ -383,22 +370,22 @@ static gfloat flcm(const gfloat a, const gfloat b) {
 
 static inline gfloat window_sharp_cosine(gfloat sample, gfloat sample_center, gfloat rate, gfloat sharpness) {
   return bitselect_f(
-	sharpness == 0.0f,
-	0.0f,
-	0.5f +
-	-0.5f * cos(F2PI *clamp(sharpness * (sample + rate/2.0f/sharpness - sample_center) / rate, 0.0f, 1.0f))
-	);
+    sharpness == 0.0f,
+    0.0f,
+    0.5f +
+    -0.5f * cos(F2PI *clamp(sharpness * (sample + rate/2.0f/sharpness - sample_center) / rate, 0.0f, 1.0f))
+    );
 }
 
 static inline v4sf window_sharp_cosine4(v4sf sample, v4sf sample_center, gfloat rate, v4sf sharpness) {
   return bitselect4f(
-	sharpness == 0.0f,
-	V4SF_ZERO,
-	0.5f +
-	-0.5f * cos_ps(F2PI * clamp4f(sharpness * (sample + rate/2.0f/sharpness - sample_center) / rate,
-								  V4SF_ZERO,
-								  V4SF_UNIT))
-	);
+    sharpness == 0.0f,
+    V4SF_ZERO,
+    0.5f +
+    -0.5f * cos_ps(F2PI * clamp4f(sharpness * (sample + rate/2.0f/sharpness - sample_center) / rate,
+                                  V4SF_ZERO,
+                                  V4SF_UNIT))
+    );
 }
 
 static gfloat* srate_prop_buf_get(const GstBtAdditive* const self, PropsSrate prop) {
@@ -416,16 +403,16 @@ static gboolean srate_prop_is_nonzero(const GstBtAdditive* const self, PropsSrat
 static void srate_props_fill(GstBtAdditive* const self, const GstClockTime timestamp, const GstClockTime interval) {
   const guint nbufelements = self->parent.generate_samples_per_buffer;
   for (guint i = 0; i < N_PROPERTIES_SRATE; ++i) {
-	GValue src = G_VALUE_INIT;
-	g_value_init(&src, G_TYPE_FLOAT);
-	g_object_get_property((GObject*)self, properties[i+1]->name, &src);
-	
-	gfloat value = g_value_get_float(&src);
-	g_value_unset(&src);
+    GValue src = G_VALUE_INIT;
+    g_value_init(&src, G_TYPE_FLOAT);
+    g_object_get_property((GObject*)self, properties[i+1]->name, &src);
+    
+    gfloat value = g_value_get_float(&src);
+    g_value_unset(&src);
 
-	gfloat* const sratebuf = &self->buf_srate_props[i * nbufelements];
-	for (guint j = 0; j < self->parent.generate_samples_per_buffer; ++j)
-	  sratebuf[j] = value;
+    gfloat* const sratebuf = &self->buf_srate_props[i * nbufelements];
+    for (guint j = 0; j < self->parent.generate_samples_per_buffer; ++j)
+      sratebuf[j] = value;
   }
 
   memset(self->props_srate_nonzero, 0, sizeof(self->props_srate_nonzero));
@@ -434,41 +421,41 @@ static void srate_props_fill(GstBtAdditive* const self, const GstClockTime times
   // Fill this srate buffer with the calculated db-to-gain value.
   gfloat* const srate_amp_boost_db = srate_prop_buf_get(self, PROP_AMP_BOOST_DB);
   for (guint i = 0; i < nbufelements; ++i) {
-	srate_amp_boost_db[i] = self->amp_boost_db_calc;
+    srate_amp_boost_db[i] = self->amp_boost_db_calc;
   }
   
   for (guint i = 0; i < self->n_voices; ++i) {
-	gstbt_additivev_get_value_array_f_for_prop(
-	  self->voices[i],
-	  timestamp,
-	  interval,
-	  nbufelements,
-	  self->buf_srate_props,
-	  self->props_srate_nonzero,
-	  self->props_srate_controlled
-	  );
+    gstbt_additivev_get_value_array_f_for_prop(
+      self->voices[i],
+      timestamp,
+      interval,
+      nbufelements,
+      self->buf_srate_props,
+      self->props_srate_nonzero,
+      self->props_srate_controlled
+      );
   }
 }
 
 static gboolean is_machine_silent(GstBtAdditive* self) {
   if (srate_prop_is_controlled(self, PROP_VOL)) {
-	return !srate_prop_is_nonzero(self, PROP_VOL);
+    return !srate_prop_is_nonzero(self, PROP_VOL);
   } else {
-	return self->vol == 0;
+    return self->vol == 0;
   }
 }
 
 static gboolean _process(GstBtAudioSynth* synth, GstBuffer* gstbuf, GstMapInfo* info) {
   struct timespec clock_start;
   clock_gettime(CLOCK_MONOTONIC_RAW, &clock_start);
-  
+
   GstBtAdditive* const self = GSTBT_ADDITIVE(synth);
 
   const gfloat rate = synth->info.rate;
   const gfloat secs_per_sample = 1.0f / rate;
 
   for (int i = 0; i < self->n_voices; ++i) {
-	gstbt_additivev_process(self->voices[i], gstbuf);
+    gstbt_additivev_process(self->voices[i], gstbuf);
   }
 
   const gfloat freq_note = (gfloat)gstbt_tone_conversion_translate_from_number(self->tones, self->note);
@@ -479,15 +466,15 @@ static gboolean _process(GstBtAudioSynth* synth, GstBuffer* gstbuf, GstMapInfo* 
   srate_props_fill(self, synth->running_time, 1e9L / rate);
 
   if (is_machine_silent(self)) {
-	memset(info->data, 0, synth->generate_samples_per_buffer * sizeof(guint16));
+    memset(info->data, 0, synth->generate_samples_per_buffer * sizeof(guint16));
 
-	// Note: if FALSE is returned here then downstream effects stop making noise.
-	return TRUE;
+    // Note: if FALSE is returned here then downstream effects stop making noise.
+    return TRUE;
   }
 
   v4sf* const srate_bend = (v4sf*)srate_prop_buf_get(self, PROP_BEND);
   for (guint i = 0; i < nbuf4elements; ++i) {
-	srate_bend[i] = freq_note + freq_note * srate_bend[i];
+    srate_bend[i] = freq_note + freq_note * srate_bend[i];
   }
   
   v4sf* const buf4 = (v4sf*)self->buf;
@@ -510,87 +497,87 @@ static gboolean _process(GstBtAudioSynth* synth, GstBuffer* gstbuf, GstMapInfo* 
   const v4sf* const srate_ringmod_depth = (v4sf*)srate_prop_buf_get(self, PROP_RINGMOD_DEPTH);
 
   for (int j = self->sum_start_idx, idx_o = 0; idx_o < self->overtones; ++j, ++idx_o) {
-	g_assert(idx_o < MAX_OVERTONES);
-	StateOvertone* const overtone = &self->states_overtone[idx_o];
-	
-	for (int i = 0; i < nbuf4elements; ++i) {
-	  const v4sf freq_note_bent = srate_bend[i];
+    g_assert(idx_o < MAX_OVERTONES);
+    StateOvertone* const overtone = &self->states_overtone[idx_o];
+    
+    for (int i = 0; i < nbuf4elements; ++i) {
+      const v4sf freq_note_bent = srate_bend[i];
 
-	  const v4sf hscale_freq = maxf4(srate_ampfreq_scale_idx_mul[i] * (gfloat)j + srate_ampfreq_scale_offset[i], tiny);
-	  const v4sf freq_overtone = freq_note_bent * hscale_freq;
-	
-	  // Limit the number of overtones to reduce aliasing.
-	  const v4sf alias_mute = bitselect4f(freq_overtone > srate_freq_max[i], V4SF_ZERO, V4SF_UNIT);
-	
-	  const v4sf amp_boost =
-		alias_mute +
-		pow_ps_method(window_sharp_cosine4(
-						freq_overtone,
-						srate_amp_boost_center[i],
-						22050.0,
-						srate_amp_boost_sharpness[i]),
-					  srate_amp_boost_exp[i]) *
-		srate_amp_boost_db[i]
-		;
+      const v4sf hscale_freq = max4f(srate_ampfreq_scale_idx_mul[i] * (gfloat)j + srate_ampfreq_scale_offset[i], tiny);
+      const v4sf freq_overtone = freq_note_bent * hscale_freq;
+    
+      // Limit the number of overtones to reduce aliasing.
+      const v4sf alias_mute = bitselect4f(freq_overtone > srate_freq_max[i], V4SF_ZERO, V4SF_UNIT);
+    
+      const v4sf amp_boost =
+        alias_mute +
+        pow_ps_method(window_sharp_cosine4(
+                        freq_overtone,
+                        srate_amp_boost_center[i],
+                        22050.0,
+                        srate_amp_boost_sharpness[i]),
+                      srate_amp_boost_exp[i]) *
+        srate_amp_boost_db[i]
+        ;
 
-	  const v4sf hscale_amp =
-		pow_ps_method(srate_amp_pow_base[i], (gfloat)j * srate_amp_exp_idx_mul[i]) *
-		pow_ps_method(hscale_freq, srate_ampfreq_scale_exp[i]) *
-		amp_boost;
+      const v4sf hscale_amp =
+        pow_ps_method(srate_amp_pow_base[i], (gfloat)j * srate_amp_exp_idx_mul[i]) *
+        pow_ps_method(hscale_freq, srate_ampfreq_scale_exp[i]) *
+        amp_boost;
 
-	  const v4sf time_to_rads = F2PI * freq_overtone;
-	  const v4sf inc = time_to_rads * secs_per_sample;
-	  
-	  const v4sf inc_rm = inc * srate_ringmod_depth[i];
+      const v4sf time_to_rads = F2PI * freq_overtone;
+      const v4sf inc = time_to_rads * secs_per_sample;
+      
+      const v4sf inc_rm = inc * srate_ringmod_depth[i];
 
-	  const v4sf f = {
-		overtone->accum_rads + inc[0],
-		overtone->accum_rads + inc[0] + inc[1],
-		overtone->accum_rads + inc[0] + inc[1] + inc[2],
-		overtone->accum_rads + inc[0] + inc[1] + inc[2] + inc[3]
-	  };
-	  const v4sf f_rm = {
-		overtone->accum_rm_rads + inc_rm[0],
-		overtone->accum_rm_rads + inc_rm[0] + inc_rm[1],
-		overtone->accum_rm_rads + inc_rm[0] + inc_rm[1] + inc_rm[2],
-		overtone->accum_rm_rads + inc_rm[0] + inc_rm[1] + inc_rm[2] + inc_rm[3]
-	  };
+      const v4sf f = {
+        overtone->accum_rads + inc[0],
+        overtone->accum_rads + inc[0] + inc[1],
+        overtone->accum_rads + inc[0] + inc[1] + inc[2],
+        overtone->accum_rads + inc[0] + inc[1] + inc[2] + inc[3]
+      };
+      const v4sf f_rm = {
+        overtone->accum_rm_rads + inc_rm[0],
+        overtone->accum_rm_rads + inc_rm[0] + inc_rm[1],
+        overtone->accum_rm_rads + inc_rm[0] + inc_rm[1] + inc_rm[2],
+        overtone->accum_rm_rads + inc_rm[0] + inc_rm[1] + inc_rm[2] + inc_rm[3]
+      };
 
-	  buf4[i] += hscale_amp * sin_ps_method(f) * powsin_ps(f_rm, srate_ringmod_rate[i]);
+      buf4[i] += hscale_amp * sin_ps_method(f) * powsin_ps(f_rm, srate_ringmod_rate[i]);
 
-	  overtone->accum_rads = f[3];
-	  overtone->accum_rm_rads = f_rm[3];
-	}
+      overtone->accum_rads = f[3];
+      overtone->accum_rm_rads = f_rm[3];
+    }
 
-	overtone->accum_rm_rads = fmodf(overtone->accum_rm_rads, F2PI);
-	overtone->accum_rads = fmodf(overtone->accum_rads, F2PI);
+    overtone->accum_rm_rads = fmodf(overtone->accum_rm_rads, F2PI);
+    overtone->accum_rads = fmodf(overtone->accum_rads, F2PI);
   }
 
   const v4sf* const vol_srate = (v4sf*)srate_prop_buf_get(self, PROP_VOL);
   
   const gfloat fscale = 32768.0f;
   for (int i = 0; i < nbuf4elements; ++i)
-	((v4ss*)info->data)[i] = __builtin_convertvector(buf4[i] * fscale * vol_srate[i], v4ss);
+    ((v4ss*)info->data)[i] = __builtin_convertvector(buf4[i] * fscale * vol_srate[i], v4ss);
   
   struct timespec clock_end;
   clock_gettime(CLOCK_MONOTONIC_RAW, &clock_end);
   self->time_accum += (clock_end.tv_sec - clock_start.tv_sec) * 1e9L + (clock_end.tv_nsec - clock_start.tv_nsec);
   self->calls += nbuf4elements * 4;
   if (self->calls > rate) {
-	GST_INFO("Avg perf: %f samples/sec\n", self->calls / (self->time_accum / 1e9f));
-	self->time_accum = 0;
-	self->calls = 0;
+    GST_INFO("Avg perf: %f samples/sec\n", self->calls / (self->time_accum / 1e9f));
+    self->time_accum = 0;
+    self->calls = 0;
   }
   return TRUE;
 }
 
 static void _negotiate (GstBtAudioSynth* base, GstCaps* caps) {
   for (guint i = 0; i < gst_caps_get_size(caps); ++i) {
-	GstStructure* const s = gst_caps_get_structure(caps, i);
-	
+    GstStructure* const s = gst_caps_get_structure(caps, i);
+    
     gst_structure_fixate_field_nearest_int(s, "channels", 1);
 
-	GST_LOG("caps structure %d: %" GST_PTR_FORMAT, i, (void*)s);
+    GST_LOG("caps structure %d: %" GST_PTR_FORMAT, i, (void*)s);
   }
 }
 
@@ -598,18 +585,18 @@ static void gstbt_additive_init(GstBtAdditive* const self) {
   self->tones = gstbt_tone_conversion_new(GSTBT_TONE_CONVERSION_EQUAL_TEMPERAMENT);
   self->buf = g_malloc(sizeof(typeof(*(self->buf))) * self->parent.generate_samples_per_buffer);
   self->buf_srate_props =
-	g_malloc(sizeof(typeof(*(self->buf_srate_props))) * self->parent.generate_samples_per_buffer * N_PROPERTIES_SRATE);
+    g_malloc(sizeof(typeof(*(self->buf_srate_props))) * self->parent.generate_samples_per_buffer * N_PROPERTIES_SRATE);
 
   self->states_overtone = g_new0(StateOvertone, MAX_OVERTONES);
 
   for (int i = 0; i < MAX_VOICES; i++) {
-	self->voices[i] = gstbt_additivev_new(&properties[1], N_PROPERTIES_SRATE);
+    self->voices[i] = gstbt_additivev_new(&properties[1], N_PROPERTIES_SRATE);
 
-	char name[7];
-	g_snprintf(name, sizeof(name), "voice%1d", i);
-		
-	gst_object_set_name((GstObject *)self->voices[i], name);
-	gst_object_set_parent((GstObject *)self->voices[i], (GstObject *)self);
+    char name[7];
+    g_snprintf(name, sizeof(name), "voice%1d", i);
+        
+    gst_object_set_name((GstObject *)self->voices[i], name);
+    gst_object_set_parent((GstObject *)self->voices[i], (GstObject *)self);
   }
 }
 
@@ -623,7 +610,7 @@ static void _dispose (GObject* object) {
   // It's necessary to unparent children so they will be unreffed and cleaned up. GstObject doesn't hold variable
   // links to its children, so it wouldn't know to unparent them and this would cause a memory leak.
   for (int i = 0; i < MAX_VOICES; i++) {
-	gst_object_unparent((GstObject*)self->voices[i]);
+    gst_object_unparent((GstObject*)self->voices[i]);
   }
   G_OBJECT_CLASS(gstbt_additive_parent_class)->dispose(object);
 }
@@ -636,108 +623,78 @@ static void gstbt_additive_class_init(GstBtAdditiveClass * const klass) {
 
   GstElementClass* const element_class = (GstElementClass *) klass;
   gst_element_class_set_static_metadata(
-	element_class,
-	"Additive",
-	"Source/Audio",
-	GST_MACHINE_DESC,
-	PACKAGE_BUGREPORT);
+    element_class,
+    "Additive",
+    "Source/Audio",
+    GST_MACHINE_DESC,
+    PACKAGE_BUGREPORT);
 
   GstBtAudioSynthClass *audio_synth_class = (GstBtAudioSynthClass *) klass;
   audio_synth_class->process = _process;
   /*audio_synth_class->reset = gstbt_sim_syn_reset;*/
   audio_synth_class->negotiate = _negotiate;
 
-	// TBD: docs
+    // TBD: docs
 /*  gst_element_class_add_metadata (element_class, GST_ELEMENT_METADATA_DOC_URI,
 "file://" DATADIR "" G_DIR_SEPARATOR_S "gtk-doc" G_DIR_SEPARATOR_S "html"
 G_DIR_SEPARATOR_S "" PACKAGE "-gst" G_DIR_SEPARATOR_S "GstBtSimSyn.html");*/
 
   const GParamFlags flags =
-	(GParamFlags)(G_PARAM_READWRITE | GST_PARAM_CONTROLLABLE | G_PARAM_STATIC_STRINGS);
+    (GParamFlags)(G_PARAM_READWRITE | GST_PARAM_CONTROLLABLE | G_PARAM_STATIC_STRINGS);
   
   // GstBtChildBin interface properties
   properties[PROP_CHILDREN] = g_param_spec_ulong(
-	"children", "Children", "",
-	1, MAX_VOICES, 1, G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS);
+    "children", "Children", "",
+    1, MAX_VOICES, 1, G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS);
 
   // Instance properties
   properties[PROP_OVERTONES] =
-	g_param_spec_uint("overtones", "Overtones", "", 0, MAX_OVERTONES, 10, flags);
+    g_param_spec_uint("overtones", "Overtones", "", 0, MAX_OVERTONES, 10, flags);
   properties[PROP_FREQ_MAX] =
-	g_param_spec_float("freq-max", "Freq Max", "", 0, 22050, 22050, flags);
+    g_param_spec_float("freq-max", "Freq Max", "", 0, 22050, 22050, flags);
   properties[PROP_SUM_START_IDX] =
-	g_param_spec_int("sum-start-idx", "Sum Start Idx", "Sum Start Index", -10, 25, 1, flags);
+    g_param_spec_int("sum-start-idx", "Sum Start Idx", "Sum Start Index", -10, 25, 1, flags);
   properties[PROP_AMP_POW_BASE] =
-	g_param_spec_float("amp-pow-base", "Amp Power Base", "Amplitude Power Base", -10, 10, 1, flags);
+    g_param_spec_float("amp-pow-base", "Amp Power Base", "Amplitude Power Base", -10, 10, 1, flags);
   properties[PROP_AMP_EXP_IDX_MUL] =
-	g_param_spec_float("amp-exp-idx-mul", "Amp Exp Idx Mul", "Amplitude Exponent Index Multiplier", -10, 10, 1, flags);
+    g_param_spec_float("amp-exp-idx-mul", "Amp Exp Idx Mul", "Amplitude Exponent Index Multiplier", -10, 10, 1, flags);
   properties[PROP_AMPFREQ_SCALE_IDX_MUL] =
-	g_param_spec_float("ampfreq-scale-idx-mul", "Ampfreq Scale Idx Mul", "Amplitude + Frequency Scale Index Multiplier", -10, 10, 1, flags);
+    g_param_spec_float("ampfreq-scale-idx-mul", "Ampfreq Scale Idx Mul", "Amplitude + Frequency Scale Index Multiplier", -10, 10, 1, flags);
   properties[PROP_AMPFREQ_SCALE_OFFSET] =
-	g_param_spec_float("ampfreq-scale-offset", "Ampfreq Scale Offset", "Amplitude + Frequency Scale Offset", -10, 10, 0, flags);
+    g_param_spec_float("ampfreq-scale-offset", "Ampfreq Scale Offset", "Amplitude + Frequency Scale Offset", -10, 10, 0, flags);
   properties[PROP_AMPFREQ_SCALE_EXP] =
-	g_param_spec_float("ampfreq-scale-exp", "Ampfreq Scale Exp", "Amplitude + Frequency Scale Exponent", -10, 1, -1, flags);
+    g_param_spec_float("ampfreq-scale-exp", "Ampfreq Scale Exp", "Amplitude + Frequency Scale Exponent", -10, 1, -1, flags);
   properties[PROP_AMP_BOOST_CENTER] =
-	g_param_spec_float("amp-boost-center", "AmpBoost Center", "", 0, 22050, 0, flags);
+    g_param_spec_float("amp-boost-center", "AmpBoost Center", "", 0, 22050, 0, flags);
   properties[PROP_AMP_BOOST_SHARPNESS] =
-	g_param_spec_float("amp-boost-sharpness", "AmpBoost Sharpness", "", 0, 200, 0, flags);
+    g_param_spec_float("amp-boost-sharpness", "AmpBoost Sharpness", "", 0, 200, 0, flags);
   properties[PROP_AMP_BOOST_EXP] =
-	g_param_spec_float("amp-boost-exp", "AmpBoost Exp", "", 0, 1024, 2, flags);
+    g_param_spec_float("amp-boost-exp", "AmpBoost Exp", "", 0, 1024, 2, flags);
   properties[PROP_AMP_BOOST_DB] =
-	g_param_spec_float("amp-boost-db", "AmpBoost dB", "", 0, 100, 2, flags);
+    g_param_spec_float("amp-boost-db", "AmpBoost dB", "", 0, 100, 2, flags);
   properties[PROP_RINGMOD_RATE] =
-	g_param_spec_float("ringmod-rate", "Ringmod Rate", "", 0, 100, 0, flags);
+    g_param_spec_float("ringmod-rate", "Ringmod Rate", "", 0, 100, 0, flags);
   properties[PROP_RINGMOD_DEPTH] =
-	g_param_spec_float("ringmod-depth", "Ringmod Depth", "", 0, 0.5, 0, flags);
+    g_param_spec_float("ringmod-depth", "Ringmod Depth", "", 0, 0.5, 0, flags);
   properties[PROP_RINGMOD_OT_OFFSET] =
-	g_param_spec_float("ringmod-ot-offset", "Ringmod OT Offset", "Ring Modulation Overtone Offset", 0, 1, 0, flags);
+    g_param_spec_float("ringmod-ot-offset", "Ringmod OT Offset", "Ring Modulation Overtone Offset", 0, 1, 0, flags);
   properties[PROP_BEND] =
-	g_param_spec_float("bend", "Bend", "", -1000, 1000, 0, flags);
+    g_param_spec_float("bend", "Bend", "", -1000, 1000, 0, flags);
   properties[PROP_VOL] =
-	g_param_spec_float("vol", "vol", "", 0, 1, 0.5, flags);
+    g_param_spec_float("vol", "vol", "", 0, 1, 0.5, flags);
   properties[PROP_NOTE] =
-	g_param_spec_enum("note", "Note", "", GSTBT_TYPE_NOTE, GSTBT_NOTE_NONE,
-					  G_PARAM_WRITABLE | GST_PARAM_CONTROLLABLE | G_PARAM_STATIC_STRINGS);
+    g_param_spec_enum("note", "Note", "", GSTBT_TYPE_NOTE, GSTBT_NOTE_NONE,
+                      G_PARAM_WRITABLE | GST_PARAM_CONTROLLABLE | G_PARAM_STATIC_STRINGS);
 
   for (int i = 1; i < N_PROPERTIES; ++i)
-	g_assert(properties[i]);
+    g_assert(properties[i]);
 
   g_object_class_install_properties (gobject_class, N_PROPERTIES, properties);
 
   for (int i = 0; i < sizeof(lut_sin) / sizeof(typeof(lut_sin)); ++i) {
-	lut_sin[i] = (gfloat)sin(G_PI * 2 * ((double)i / (sizeof(lut_sin) / sizeof(typeof(lut_sin)))));
+    lut_sin[i] = (gfloat)sin(G_PI * 2 * ((double)i / (sizeof(lut_sin) / sizeof(typeof(lut_sin)))));
   }
 
-  test();
+  math_test();
 }
 
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wunused-function"
-static void test(void) {
-  {
-	v4sf input = {-1.0f, 0.0f, 0.0f, 2.0f};
-	v4sf expected = {0.5f, 1.0f, 1.0f, 4.0f};
-	g_assert(v4sf_eq(pow_ps(2 * V4SF_UNIT, input), expected));
-  }
-
-  {
-	v4sf input = {-1.0f, 1.0f, 100.5f, -100.5f};
-	v4sf expected = {1.0f, 1.0f, 100.5f, 100.5f};
-	g_assert(v4sf_eq(abs4f(input), expected));
-  }
-
-  {
-	v4si inputa = {1, 2, 3, 4};
-	v4si inputb = {100, 200, 300, 400};
-	v4si expected = {1, 2, 300, 400};
-	g_assert(v4si_eq(bitselect4(inputa <= 2, inputa, inputb), expected));
-  }
-  
-  {
-	v4sf inputa = {1.0f, 2.0f, 3.0f, 4.0f};
-	v4sf inputb = {100.0f, 200.0f, 300.0f, 400.0f};
-	v4sf expected = {1.0f, 2.0f, 300.0f, 400.0f};
-	g_assert(v4sf_eq(bitselect4f(inputa <= 2, inputa, inputb), expected));
-  }
-}
-#pragma GCC diagnostic pop

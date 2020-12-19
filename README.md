@@ -42,3 +42,7 @@ An example of how to examine generated assembly code to see how much has been ve
 	gcc -DHAVE_CONFIG_H -I. -I.. -pthread -I../buzztrax-stable/include -I/usr/include/gstreamer-1.0 -I/usr/include/glib-2.0 -I/usr/lib/x86_64-linux-gnu/glib-2.0/include -O2 -ffast-math -lm -ftree-loop-vectorize -std=gnu99 -Werror -Wno-error=unused-variable -Wall -Wshadow -Wpointer-arith -Wstrict-prototypes -fvisibility=hidden -g -fPIC -DPIC -Wa,-adhln ../src/additive.c
 	
 I.e. copy the build command that `make` generates and add `-Wa,-adhln`.
+
+Laster, Julien's functions were replaced by the same Cephes library functions translated to use vector intrinsics. These were found to perform just as fast.
+
+Disabling denormal floats gave a minor performance boost.
