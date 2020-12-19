@@ -185,13 +185,27 @@ static const v4sf V4SF_COSCOF_P0 = 2.443315711809948E-005f * V4SF_UNIT;
 static const v4sf V4SF_COSCOF_P1 = -1.388731625493765E-003f * V4SF_UNIT;
 static const v4sf V4SF_COSCOF_P2 = 4.166664568298827E-002f * V4SF_UNIT;
 
+// https://stackoverflow.com/questions/2487653/avoiding-denormal-values-in-c
+#define CSR_FLUSH_TO_ZERO         (1 << 15)
+
+static inline unsigned denormals_disable(void) {
+  unsigned csr = __builtin_ia32_stmxcsr();
+  csr |= CSR_FLUSH_TO_ZERO;
+  __builtin_ia32_ldmxcsr(csr);
+  return csr;
+}
+
+static inline void denormals_restore(unsigned csr) {
+  __builtin_ia32_ldmxcsr(csr);
+}
+
 // Returns 0.0f when f is a denormal number.
 static inline v4sf denorm_strip4f(v4sf f) {
   return bitselect4f(((v4si)f & V4UI_FLOAT_EXPONENT) == 0, V4SF_ZERO, f);
 }
 
 // Adapted from Cephes library / Julien Pommier's fast SSE math functions.
-static inline v4sf sin_ps2(v4sf x) {
+static inline v4sf sin4f(v4sf x) {
 /* make argument positive but save the sign */
   v4sf sign = bitselect4f(x < 0.0f, -V4SF_UNIT, V4SF_UNIT);
   x = abs4f(x);

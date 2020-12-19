@@ -25,11 +25,11 @@
 #include <math.h>
 
 struct _GstBtAdsrClass {
-  GstControlSourceClass parent;
+  GstBtPropSrateControlSource parent;
 };
   
 struct _GstBtAdsr {
-  GstControlSource parent;
+  GstBtPropSrateControlSource parent;
 
   const char* postfix;
   
@@ -154,7 +154,7 @@ gboolean gstbt_adsr_mod_value_array_f(GstBtPropSrateControlSource* super, GstClo
   for (guint i = 0; i < n_values; ++i) {
 	const gfloat val = get_value_inline(self, timestamp);
 	values[i] *= val;
-	accum = val && val != 0;
+	accum = accum != 0 || val != 0;
 	timestamp += interval;
   }
   return accum != 0;
@@ -248,8 +248,8 @@ void gstbt_adsr_props_add(GObjectClass* const klass, const char* postfix, guint*
 }
 
 void gstbt_adsr_init(GstBtAdsr* const self) {
-  self->parent.get_value = get_value;
-  self->parent.get_value_array = get_value_array;
+  self->parent.parent_instance.get_value = get_value;
+  self->parent.parent_instance.get_value_array = get_value_array;
 }
 
 void gstbt_adsr_trigger(GstBtAdsr* const self, const GstClockTime time) {

@@ -18,6 +18,7 @@
 
 #include "src/voice.h"
 #include "src/envelope.h"
+#include "src/lfo.h"
 #include "src/genums.h"
 #include "src/generated/generated-genums.h"
 
@@ -33,7 +34,7 @@ struct _GstBtAdditiveV
   guint idx_target_prop;
   
   GstBtAdsr* adsr;
-  GstLFOWaveform* lfo;
+  GstBtLfoFloat* lfo;
   GParamSpec** parent_props;
   guint n_parent_props;
 };
@@ -57,7 +58,8 @@ static void property_set(GObject* const object, const guint prop_id, const GValu
 	self->idx_target_prop = MIN(g_value_get_enum(value), self->n_parent_props);
 	break;
   default:
-	if (!gstbt_adsr_property_set((GObject*)self->adsr, prop_id, value, pspec)) {
+	if (!gstbt_adsr_property_set((GObject*)self->adsr, prop_id, value, pspec) &&
+		!gstbt_lfo_float_property_set((GObject*)self->lfo, prop_id, value, pspec)) {
 	  G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
 	}
   }
@@ -72,7 +74,8 @@ static void property_get(GObject* const object, const guint prop_id, GValue* con
 	g_value_set_enum(value, self->idx_target_prop);
 	break;
   default:
-	if (!gstbt_adsr_property_get((GObject*)self->adsr, prop_id, value, pspec)) {
+	if (!gstbt_adsr_property_get((GObject*)self->adsr, prop_id, value, pspec) &&
+		!gstbt_lfo_float_property_get((GObject*)self->lfo, prop_id, value, pspec)) {
 	  G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
 	}
   }
@@ -108,23 +111,26 @@ void gstbt_additivev_get_value_array_f_for_prop(
 	gboolean any_nonzero = gstbt_prop_srate_cs_mod_value_array_f(
 	  (GstBtPropSrateControlSource*)self->adsr, timestamp, interval, n_values,
 	  values + n_values * idx);
+	
+	any_nonzero = gstbt_prop_srate_cs_mod_value_array_f(
+	  (GstBtPropSrateControlSource*)self->lfo, timestamp, interval, n_values,
+	  values + n_values * idx)
+	  || any_nonzero;
 
 	props_active[idx] = props_active[idx] || any_nonzero;
 	props_controlled[idx] = TRUE;
   }
-	
-  if (idx+1 == PROP_AMP_BOOST_CENTER)
-	GST_INFO("%f", values[idx * n_values]);
 }
 
 static void gstbt_additivev_init(GstBtAdditiveV* const self) {
   self->adsr = gstbt_adsr_new((GObject*)self, "");
-//  self->lfo = g_object_new(GST_TYPE_LFO_CONTROL_SOURCE,
+  self->lfo = gstbt_lfo_float_new((GObject*)self);
 }
 
 static void dispose(GObject* const gobj) {
   GstBtAdditiveV* const self = (GstBtAdditiveV*)gobj;
   g_clear_object(&self->adsr);
+  g_clear_object(&self->lfo);
 }
 
 static void gstbt_additivev_class_init(GstBtAdditiveVClass* const klass) {
@@ -143,37 +149,8 @@ static void gstbt_additivev_class_init(GstBtAdditiveVClass* const klass) {
   g_object_class_install_properties(gobject_class, N_PROPERTIES, properties);
 
   guint idx = N_PROPERTIES;
-  
-  g_object_class_install_property(
-	gobject_class,
-	idx++,
-	g_param_spec_double("lfo-amplitude", "LFO Amp", "LFO Amplitude", 0, 1, 0, flags)
-	);
 
-  g_object_class_install_property(
-	gobject_class,
-	idx++,
-	g_param_spec_double("lfo-frequency", "LFO Freq", "LFO Frequency", 0, 1, 0, flags)
-	);
-
-  g_object_class_install_property(
-	gobject_class,
-	idx++,
-	g_param_spec_double("lfo-offset", "LFO Offset", "LFO Offset", -1, 1, 0, flags)
-	);
-
-  g_object_class_install_property(
-	gobject_class,
-	idx++,
-	g_param_spec_double("lfo-phase", "LFO Phase", "LFO Phase", -1, 1, 0, flags)
-	);
-
-  g_object_class_install_property(
-	gobject_class,
-	idx++,
-	g_param_spec_uint("lfo-waveform", "LFO Wave", "LFO Waveform", 0, 3, 0, flags)
-	);
-
+  gstbt_lfo_float_props_add(gobject_class, &idx);
   gstbt_adsr_props_add(gobject_class, "", &idx);
 }
 

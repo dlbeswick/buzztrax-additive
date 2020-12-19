@@ -22,6 +22,7 @@
 #include "src/envelope.h"
 #include "src/math.h"
 #include "src/voice.h"
+#include "src/debug.h"
 
 #include "libbuzztrax-gst/audiosynth.h"
 #include "libbuzztrax-gst/childbin.h"
@@ -41,8 +42,7 @@ GType gstbt_additive_get_type(void);
 #define GST_MACHINE_NAME "additive"
 #define GST_MACHINE_DESC "Additive synthesis via many sines"
 
-#define GST_CAT_DEFAULT additive_debug
-GST_DEBUG_CATEGORY_STATIC(GST_CAT_DEFAULT);
+GST_DEBUG_CATEGORY(GST_CAT_DEFAULT);
 
 const float FPI = (gfloat)G_PI;
 const float F2PI = (gfloat)(2*G_PI);
