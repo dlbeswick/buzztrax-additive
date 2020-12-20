@@ -36,6 +36,11 @@ const float F2PI;
 const v4ui V4UI_UNIT;
 const v4ui V4UI_ZERO;
 const v4ui V4UI_MAX;
+
+#define V4SI_UNIT ((v4si)(V4UI_UNIT))
+#define V4SI_ZERO ((v4si)(V4UI_ZERO))
+#define V4SI_MAX ((v4si)(V4UI_MAX))
+
 const v4sf V4SF_UNIT;
 const v4sf V4SF_ZERO;
 const v4sf V4SF_NAN;

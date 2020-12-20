@@ -48,3 +48,5 @@ Laster, Julien's functions were replaced by the same Cephes library functions tr
 Disabling denormal floats gave a minor performance boost.
 
 Using v4sf consts instead of float literals in vectorised code made no difference -- the compiler is smart enough to choose the best representation and isn't creating overhead in converting vectors back and forth.
+
+In inner loops, it's still generally better to avoid heavy computation using branches rather than trying to avoid all branching.

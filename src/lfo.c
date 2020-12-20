@@ -45,7 +45,7 @@ G_DEFINE_TYPE(GstBtLfoFloat, gstbt_lfo_float, gstbt_prop_srate_cs_get_type());
 static gboolean mod_value_array_f(GstBtPropSrateControlSource* super, GstClockTime timestamp, GstClockTime interval,
 								   guint n_values, gfloat* values) {
   const GstBtLfoFloat* self = (GstBtLfoFloat*)super;
-  if (self->frequency == 0)
+  if (self->frequency == 0.0f)
 	return FALSE;
   
   v4ui any_nonzero = V4UI_ZERO;

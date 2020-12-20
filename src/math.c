@@ -3,8 +3,6 @@
 const gfloat F2PI = 2*(gfloat)G_PI;
 const gfloat F4OPI = 4/(gfloat)G_PI;
 
-const v4si V4SI_UNIT = {1, 1, 1, 1};
-
 const v4ui V4UI_UNIT = {1, 1, 1, 1};
 const v4ui V4UI_ZERO = 0 * V4UI_UNIT;
 const v4ui V4UI_MAX = 0xFFFFFFFF * V4UI_UNIT;
