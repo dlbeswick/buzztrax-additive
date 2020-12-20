@@ -142,22 +142,20 @@ v4sf cos4f(v4sf x)
 	1 1
 	2 -1
 	3 -1
-	0 -1
-	1 -1
-	2 1
-	3 1
+	4 -1
+	5 -1
+	6 1
+	7 1
    */
   return bitselect4f(j+2 > 3, -y, y);
 }
 
 v4sf pow4f(v4sf base, v4sf exponent) {
-  const v4si base_isneg = base < 0.0f;
-  const v4sf base_nonneg = bitselect4f(base_isneg, -base, base);
-  const v4sf r = exp4f(exponent*log4f(base_nonneg));
+  const v4sf r = exp4f(exponent*log4f(fabs4f(base)));
   return bitselect4f(
     base == V4SF_ZERO,
     V4SF_ZERO,
-    bitselect4f(base_isneg, 1.0f / r, r)
+    bitselect4f(sign4f(base), 1.0f / r, r)
     );
 }
 

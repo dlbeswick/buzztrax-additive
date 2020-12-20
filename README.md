@@ -46,3 +46,5 @@ I.e. copy the build command that `make` generates and add `-Wa,-adhln`.
 Laster, Julien's functions were replaced by the same Cephes library functions translated to use vector intrinsics. These were found to perform just as fast.
 
 Disabling denormal floats gave a minor performance boost.
+
+Using v4sf consts instead of float literals in vectorised code made no difference -- the compiler is smart enough to choose the best representation and isn't creating overhead in converting vectors back and forth.
