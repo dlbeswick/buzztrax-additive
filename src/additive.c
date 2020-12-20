@@ -453,9 +453,10 @@ static gboolean _process(GstBtAudioSynth* synth, GstBuffer* gstbuf, GstMapInfo* 
       const v4sf freq_overtone = freq_note_bent * hscale_freq;
     
       // Limit the number of overtones to reduce aliasing.
-      const v4sf alias_mute = bitselect4f(freq_overtone > srate_freq_max[i], V4SF_ZERO, V4SF_UNIT);
+      if (v4si_eq(freq_overtone > srate_freq_max[i], V4SI_MAX))
+		continue;
     
-      v4sf amp_boost = alias_mute * srate_amp_boost_db[i];
+      v4sf amp_boost = srate_amp_boost_db[i];
 	  
 	  if (!v4sf_eq(amp_boost, V4SF_ZERO)) {
         amp_boost *= pow4f_method(window_sharp_cosine4(
