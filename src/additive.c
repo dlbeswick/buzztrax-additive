@@ -217,7 +217,7 @@ static void _set_property (GObject * object, guint prop_id, const GValue * value
     break;
   case PROP_AMP_BOOST_DB:
     self->amp_boost_db = g_value_get_float(value);
-    self->amp_boost_db_calc = db_to_gain(g_value_get_float(value));
+    self->amp_boost_db_calc = db_to_gain(g_value_get_float(value)) - 1;
     break;
   case PROP_RINGMOD_RATE:
     self->ringmod_rate = g_value_get_float(value);
@@ -423,8 +423,6 @@ static gboolean _process(GstBtAudioSynth* synth, GstBuffer* gstbuf, GstMapInfo* 
 
   memset(buf4, 0, nbuf4elements*sizeof(typeof(*buf4)));
 
-  const v4sf tiny = V4SF_UNIT * 1e-6f; // note: also -120db
-
   const v4sf* const srate_freq_max = (v4sf*)srate_prop_buf_get(self, PROP_FREQ_MAX);
   const v4sf* const srate_ampfreq_scale_idx_mul = (v4sf*)srate_prop_buf_get(self, PROP_AMPFREQ_SCALE_IDX_MUL);
   const v4sf* const srate_amp_boost_center = (v4sf*)srate_prop_buf_get(self, PROP_AMP_BOOST_CENTER);
@@ -448,14 +446,16 @@ static gboolean _process(GstBtAudioSynth* synth, GstBuffer* gstbuf, GstMapInfo* 
     for (int i = 0; i < nbuf4elements; ++i) {
       const v4sf freq_note_bent = srate_bend[i];
 
-      const v4sf hscale_freq = max4f(srate_ampfreq_scale_idx_mul[i] * (gfloat)j + srate_ampfreq_scale_offset[i], tiny);
+      const v4sf hscale_freq =
+		max4f(srate_ampfreq_scale_idx_mul[i] * (gfloat)j + srate_ampfreq_scale_offset[i], V4SF_ZERO);
+	  
       const v4sf freq_overtone = freq_note_bent * hscale_freq;
     
       // Limit the number of overtones to reduce aliasing.
       const v4sf alias_mute = bitselect4f(freq_overtone > srate_freq_max[i], V4SF_ZERO, V4SF_UNIT);
     
       const v4sf amp_boost =
-        alias_mute +
+        alias_mute *
         pow4f_method(window_sharp_cosine4(
 					   freq_overtone,
 					   srate_amp_boost_center[i],
@@ -466,9 +466,10 @@ static gboolean _process(GstBtAudioSynth* synth, GstBuffer* gstbuf, GstMapInfo* 
         ;
 
       const v4sf hscale_amp =
-        pow4f_method(srate_amp_pow_base[i], (gfloat)j * srate_amp_exp_idx_mul[i]) *
-        pow4f_method(hscale_freq, srate_ampfreq_scale_exp[i]) *
-        amp_boost;
+		amp_boost
+        + pow4f_method(srate_amp_pow_base[i], (gfloat)j * srate_amp_exp_idx_mul[i])
+        * pow4f_method(hscale_freq, srate_ampfreq_scale_exp[i])
+        ;
 
       const v4sf time_to_rads = F2PI * freq_overtone;
       const v4sf inc = time_to_rads * secs_per_sample;
@@ -483,7 +484,10 @@ static gboolean _process(GstBtAudioSynth* synth, GstBuffer* gstbuf, GstMapInfo* 
 	  f_rm[2] = f_rm[1] + inc_rm[2];
 	  f_rm[3] = f_rm[2] + inc_rm[3];
 	  
-      buf4[i] += hscale_amp * sin4f(f) * powsin4f(f_rm, srate_ringmod_rate[i]);
+      v4sf sample = hscale_amp * sin4f(f);
+	  if (!v4sf_eq(srate_ringmod_rate[i], V4SF_ZERO))
+		sample *= powsin4f(f_rm, srate_ringmod_rate[i]);
+	  buf4[i] += sample;
     }
 
     overtone->accum_rads = fmodf(f[3], F2PI);
@@ -608,7 +612,7 @@ G_DIR_SEPARATOR_S "" PACKAGE "-gst" G_DIR_SEPARATOR_S "GstBtSimSyn.html");*/
   properties[PROP_AMP_BOOST_EXP] =
     g_param_spec_float("amp-boost-exp", "AmpBoost Exp", "", 0, 1024, 2, flags);
   properties[PROP_AMP_BOOST_DB] =
-    g_param_spec_float("amp-boost-db", "AmpBoost dB", "", 0, 100, 2, flags);
+    g_param_spec_float("amp-boost-db", "AmpBoost dB", "", 0, 30, 2, flags);
   properties[PROP_RINGMOD_RATE] =
     g_param_spec_float("ringmod-rate", "Ringmod Rate", "", 0, 100, 0, flags);
   properties[PROP_RINGMOD_DEPTH] =
