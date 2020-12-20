@@ -18,8 +18,9 @@
 
 #pragma once
 
-#include <math.h>
 #include "src/sse_mathfun.h"
+#include <glib.h>
+#include <math.h>
 #include <stdio.h>
 
 
@@ -29,18 +30,21 @@ typedef gint v4si __attribute__ ((vector_size (16)));
 typedef guint v4ui __attribute__ ((vector_size (16)));
 typedef gint16 v4ss __attribute__ ((vector_size (8)));
 
-static const v4ui V4UI_UNIT = {1, 1, 1, 1};
-static const v4ui V4UI_ZERO = 0 * V4UI_UNIT;
-static const v4ui V4UI_MAX = 0xFFFFFFFF * V4UI_UNIT;
-static const v4sf V4SF_UNIT = {1.0f, 1.0f, 1.0f, 1.0f};
-static const v4sf V4SF_ZERO = 0.0f * V4SF_UNIT;
-static const v4sf V4SF_NAN = nanf("") * V4SF_UNIT;
-static const v4ui V4SF_SIGN_MASK = 0x80000000 * V4UI_UNIT;
-static const v4sf V4SF_MIN_NORM_POS = (v4sf)(0x00800000 * V4UI_UNIT); /* the smallest non-denormalized float */
+#define FPI = (gfloat)G_PI;
+const float F2PI;
 
-static const v4ui V4UI_FLOAT_0P5 = 0x3F000000 * V4UI_UNIT;
-static const v4ui V4UI_FLOAT_EXPONENT = 0x7F800000 * V4UI_UNIT;
-static const v4ui V4UI_FLOAT_INV_EXPONENT = ~V4UI_FLOAT_EXPONENT;
+const v4ui V4UI_UNIT;
+const v4ui V4UI_ZERO;
+const v4ui V4UI_MAX;
+const v4sf V4SF_UNIT;
+const v4sf V4SF_ZERO;
+const v4sf V4SF_NAN;
+const v4ui V4SF_SIGN_MASK;
+const v4sf V4SF_MIN_NORM_POS;
+
+const v4ui V4UI_FLOAT_0P5;
+const v4ui V4UI_FLOAT_EXPONENT;
+const v4ui V4UI_FLOAT_INV_EXPONENT;
 
 // libmvec
 // https://stackoverflow.com/questions/40475140/mathematical-functions-for-simd-registers
@@ -60,7 +64,7 @@ static inline gint bitselect(gint cond, gint if_t, gint if_f) {
 //
 // v4sf i = {1,1,1,1}; bitselect4(i, a, b);
 //
-// It must be written as follows:
+// It must be written with a boolean test as follows:
 //
 // v4sf i = {1,1,1,1}; bitselect4(i != 0, a, b);
 static inline v4si bitselect4(v4si cond, v4si if_t, v4si if_f) {
@@ -78,7 +82,7 @@ static inline gfloat bitselect_f(gint cond, gfloat if_t, gfloat if_f) {
 }
 
 // See bitselect4.
-static inline v4sf bitselect4f(v4si cond, v4sf if_t, v4sf if_f) {
+static inline v4sf bitselect4f(const v4si cond, const v4sf if_t, const v4sf if_f) {
   return (v4sf)(((v4si)if_t & cond) | ((v4si)if_f & (~cond)));
 }
 
@@ -129,7 +133,7 @@ static inline gfloat abs_fracf(gfloat f) {
   return fabs(modff(f, &i));
 }
 
-static inline v4sf abs4f(v4sf f) {
+static inline v4sf fabs4f(v4sf f) {
   return (v4sf)((v4si)f & ~V4SF_SIGN_MASK);
 }
 
@@ -175,15 +179,15 @@ static inline v4sf ldexp4f(v4sf x, v4si n) {
 }
 
 // From Cephes library
-static const v4sf V4SF_DP1 = 0.78515625f * V4SF_UNIT;
-static const v4sf V4SF_DP2 = 2.4187564849853515625e-4f * V4SF_UNIT;
-static const v4sf V4SF_DP3 = 3.77489497744594108e-8f * V4SF_UNIT;
-static const v4sf V4SF_SINCOF_P0 = -1.9515295891E-4f * V4SF_UNIT;
-static const v4sf V4SF_SINCOF_P1 = 8.3321608736E-3f * V4SF_UNIT;
-static const v4sf V4SF_SINCOF_P2 = -1.6666654611E-1f * V4SF_UNIT;
-static const v4sf V4SF_COSCOF_P0 = 2.443315711809948E-005f * V4SF_UNIT;
-static const v4sf V4SF_COSCOF_P1 = -1.388731625493765E-003f * V4SF_UNIT;
-static const v4sf V4SF_COSCOF_P2 = 4.166664568298827E-002f * V4SF_UNIT;
+const v4sf V4SF_DP1;
+const v4sf V4SF_DP2;
+const v4sf V4SF_DP3;
+const v4sf V4SF_SINCOF_P0;
+const v4sf V4SF_SINCOF_P1;
+const v4sf V4SF_SINCOF_P2;
+const v4sf V4SF_COSCOF_P0;
+const v4sf V4SF_COSCOF_P1;
+const v4sf V4SF_COSCOF_P2;
 
 // https://stackoverflow.com/questions/2487653/avoiding-denormal-values-in-c
 #define CSR_FLUSH_TO_ZERO         (1 << 15)
@@ -205,115 +209,47 @@ static inline v4sf denorm_strip4f(v4sf f) {
 }
 
 // Adapted from Cephes library / Julien Pommier's fast SSE math functions.
-static inline v4sf sin4f(v4sf x) {
-/* make argument positive but save the sign */
-  v4sf sign = bitselect4f(x < 0.0f, -V4SF_UNIT, V4SF_UNIT);
-  x = abs4f(x);
+v4sf sin4f(v4sf x);
+v4sf cos4f(v4sf x);
+v4sf log4f(v4sf x);
 
-  /* integer part of x/PIO4 */
-  v4sf y = floor4f(x / (gfloat)G_PI_4);
-
-  /* note: integer overflow guard removed */
-  
-  /* convert to integer for tests on the phase angle */
-  v4si j = __builtin_convertvector(y, v4si);
-  
-/* map zeros to origin */
-  y = bitselect4f((j & 1) == 1, y + 1.0f, y);
-  j = bitselect4((j & 1) == 1, j + 1, j);
-
-  j = j & 07; /* octant modulo 360 degrees */
-
-/* reflect in x axis */
-  sign = bitselect4f(j > 3, -sign, sign);
-  j = bitselect4(j > 3, j - 4, j);
-
-/* Extended precision modular arithmetic */
-  v4sf z = ((x - y * V4SF_DP1) - y * V4SF_DP2) - y * V4SF_DP3;
-
-  v4sf zz = z * z;
-
-  v4sf patha = 1.0f - zz*0.5f + zz * zz * ((V4SF_COSCOF_P0 * zz + V4SF_COSCOF_P1) * zz + V4SF_COSCOF_P2);
-  v4sf pathb = z + z * zz * ((V4SF_SINCOF_P0 * zz + V4SF_SINCOF_P1) * zz + V4SF_SINCOF_P2);
-	
-  y = bitselect4f((j==1) | (j==2), patha, pathb);
-
-  return bitselect4f(sign < 0, -y, y);
-}
-
-// Adapted from Cephes library
-static inline v4sf log4f(v4sf x)
-{
-/* Test for domain */
-  x = bitselect4f(x <= 0.0, V4SF_NAN, x);
-
-  v4si e;
-  x = frexp4f(x, &e);
-  e = bitselect4(x < 0.707106781186547524f /*SQRTHF*/, e - 1, e);
-  x = bitselect4f(x < 0.707106781186547524f /*SQRTHF*/, x + x - 1.0f  /* 2x - 1 */, x - 1.0f);
-  
-  v4sf z = x * x;
-
-  v4sf y =
-	(((((((( 7.0376836292E-2f * x
-			 - 1.1514610310E-1f) * x
-		   + 1.1676998740E-1f) * x
-		  - 1.2420140846E-1f) * x
-		 + 1.4249322787E-1f) * x
-		- 1.6668057665E-1f) * x
-	   + 2.0000714765E-1f) * x
-	  - 2.4999993993E-1f) * x
-	 + 3.3333331174E-1f) * x * z;
-
-  v4sf fe = bitselect4f(e != 0, __builtin_convertvector(e, v4sf), V4SF_ZERO);
-  y = bitselect4f(e != 0, y + -2.12194440e-4f * fe, y);
-
-  y += -0.5f * z;  /* y - 0.5 x^2 */
-  z = x + y;   /* ... + x  */
-
-  z = bitselect4f(e != 0, z + 0.693359375f * fe, z);
-
-  return z;
-}
-
-// Adapted from Cephes library
 // Domain checks removed: -103.278929903431851103 < x < 88.72283905206835
 // This function will return incorrect values for denormal numbers.
-static inline v4sf exp4f(v4sf x)
-{
-/* Express e**x = e**g 2**n
- *   = e**g e**( n loge(2) )
- *   = e**( g + n loge(2) )
- */
-  v4sf z = floor4f( 1.44269504088896341f /*LOG2EF*/ * x + 0.5f ); /* floor() truncates toward -infinity. */
-  x -= z * 0.693359375f /*C1*/;
-  x -= z * -2.12194440e-4f /*C2*/;
-  v4si n = __builtin_convertvector(z, v4si);
+v4sf exp4f(v4sf x);
 
-  z = x * x;
-/* Theoretical peak relative error in [-0.5, +0.5] is 4.2e-9. */
-  z =
-	((((( 1.9875691500E-4f  * x
-		  + 1.3981999507E-3f) * x
-		+ 8.3334519073E-3f) * x
-	   + 4.1665795894E-2f) * x
-	  + 1.6666665459E-1f) * x
-	 + 5.0000001201E-1f) * z
-	+ x
-	+ 1.0f;
+v4sf pow4f(v4sf base, v4sf exponent);
 
-/* multiply by power of 2 */
-  return ldexp4f(z, n);
+static inline v4sf sin4f_method(const v4sf x) {
+  return sin4f(x);
+  //return _ZGVbN4v_sinf(x);
 }
 
-static inline v4sf powf4(v4sf base, v4sf exponent) {
-  const v4si base_isneg = base < 0.0f;
-  const v4sf base_nonneg = bitselect4f(base_isneg, -base, base);
-  const v4sf r = exp4f(exponent*log4f(base_nonneg));
+// Sine with range  0 -> 1
+static inline v4sf sin014f(const v4sf x) {
+  return (1.0f + sin4f_method(x)) * 0.5f;
+}
+
+static inline v4sf pow4f_method(const v4sf x, const v4sf vexp) {
+  return pow4f(x, vexp);
+}
+
+// Take a sin with range 0 -> 1 and exponentiate to 'vexp' power
+// Return the result normalized back to -1 -> 1 range.
+// A way of waveshaping using non-odd powers?
+static inline v4sf powsin4f(const v4sf x, const v4sf vexp) {
+  return (pow4f_method(sin014f(x), vexp) - 0.5f) * 2.0f;
+}
+
+// A cosine window whose slope can be controlled with a "sharpness" value.
+// Basically, that value modulates the cos functions frequency, which can narrow or widen the peak.
+static inline v4sf window_sharp_cosine4(v4sf sample, v4sf sample_center, gfloat rate, v4sf sharpness) {
   return bitselect4f(
-    base == V4SF_ZERO,
+    sharpness == 0.0f,
     V4SF_ZERO,
-    bitselect4f(base_isneg, 1.0f / r, r)
+    0.5f +
+    -0.5f * cos4f(F2PI * clamp4f(sharpness * (sample + rate/2.0f/sharpness - sample_center) / rate,
+								 V4SF_ZERO,
+								 V4SF_UNIT))
     );
 }
 
@@ -321,7 +257,7 @@ static inline void math_test(void) {
   {
     v4sf input = {-1.0f, 0.0f, 0.0f, 2.0f};
     v4sf expected = {0.5f, 1.0f, 1.0f, 4.0f};
-    v4sf result = powf4(2 * V4SF_UNIT, input);
+    v4sf result = pow4f(2 * V4SF_UNIT, input);
     for (int i = 0; i < 4; ++i) {
       printf("%x %x %x\n", ((v4si)input)[i], ((v4si)result)[i], ((v4si)expected)[i]);
       printf("%.20f %.20f %.20f\n", input[i], result[i], expected[i]);
@@ -332,7 +268,7 @@ static inline void math_test(void) {
   {
     v4sf input = {-1.0f, 1.0f, 100.5f, -100.5f};
     v4sf expected = {1.0f, 1.0f, 100.5f, 100.5f};
-    g_assert(v4sf_eq(abs4f(input), expected));
+    g_assert(v4sf_eq(fabs4f(input), expected));
   }
 
   {
