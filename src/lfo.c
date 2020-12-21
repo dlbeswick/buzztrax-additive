@@ -17,6 +17,8 @@
 */
 
 #include "src/lfo.h"
+#include "src/genums.h"
+#include "src/generated/generated-genums.h"
 #include "src/math.h"
 #include "src/properties_simple.h"
 #include "src/debug.h"
@@ -37,37 +39,92 @@ struct _GstBtLfoFloat {
   gfloat phase;
   guint waveform;
 
+  gfloat accum;
+  
   BtPropertiesSimple* props;
 };
 
 G_DEFINE_TYPE(GstBtLfoFloat, gstbt_lfo_float, gstbt_prop_srate_cs_get_type());
 
-static gboolean mod_value_array_f(GstBtPropSrateControlSource* super, GstClockTime timestamp, GstClockTime interval,
-								   guint n_values, gfloat* values) {
-  const GstBtLfoFloat* self = (GstBtLfoFloat*)super;
-  if (self->frequency == 0.0f)
-	return FALSE;
+static gfloat timestamp_to_accum(const GstBtLfoFloat* self, GstClockTime time) {
+  if (self->frequency == 0) {
+	return time;
+  }
   
-  v4ui any_nonzero = V4UI_ZERO;
-  v4sf* const out = (v4sf*)values;
   const gfloat period_secs = 1.0f / self->frequency;
   const GstClockTime period_nsecs = period_secs * GST_SECOND;
   const GstClockTime phase_nsecs = period_nsecs * self->phase;
-  const gfloat start = (gfloat)((timestamp + phase_nsecs) % period_nsecs)/GST_SECOND/period_secs * 2*G_PI;
-  const gfloat inc = (gfloat)interval/GST_SECOND * (gfloat)(2*G_PI);
+  const gfloat result = (gfloat)((time + phase_nsecs) % period_nsecs)/GST_SECOND/period_secs;
+  
+  switch (self->waveform) {
+  case GSTBT_LFO_FLOAT_WAVEFORM_SINE: {
+	return result * 2*G_PI;
+  }
+  default:
+	return result;
+  }
+}
+
+static gfloat get_accum_period(const GstBtLfoFloat* self) {
+  switch (self->waveform) {
+  case GSTBT_LFO_FLOAT_WAVEFORM_SINE:
+	return (gfloat)(2*G_PI);
+  default:
+	return 1.f;
+  }
+}
+
+static gfloat get_shape(const GstBtLfoFloat* self) {
+  switch (self->waveform) {
+  case GSTBT_LFO_FLOAT_WAVEFORM_SINE:
+	return self->shape * 10.f;
+  default:
+	return self->shape;
+  }
+}
+
+static inline v4sf get_sample(const GstBtLfoFloatWaveform waveform, const v4sf accum, const v4sf shape) {
+  switch (waveform) {
+  case GSTBT_LFO_FLOAT_WAVEFORM_SINE:
+	return powsin4f(accum, shape);
+  case GSTBT_LFO_FLOAT_WAVEFORM_SQUARE:
+	return bitselect4f(accum < shape, -V4SF_UNIT, V4SF_UNIT);
+  default:
+	return V4SF_ZERO;
+  }
+}
+
+gboolean gstbt_lfo_float_mod_value_array_accum(GstBtLfoFloat* self, gfloat* accum, GstClockTime interval,
+											   guint n_values, gfloat* values) {
+  if (self->frequency == 0.0f)
+	return FALSE;
+  
+  v4si any_nonzero = V4SI_ZERO;
+  v4sf* const out = (v4sf*)values;
+  const gfloat period = get_accum_period(self);
+  const gfloat inc = (gfloat)interval/GST_SECOND * period * self->frequency;
   const v4sf t0 = {0, 1, 2, 3};
-  v4sf accum = start + inc * t0;
+  v4sf accum4 = *accum + inc * t0;
   const v4sf inc4 = inc*4 * V4SF_UNIT;
-  const v4sf shape4 = V4SF_UNIT * self->shape;
+  const v4sf shape4 = V4SF_UNIT * get_shape(self);
   
   for (guint i = 0; i < n_values/4; ++i) {
-	const v4sf val = powsin4f(accum, shape4);
-	out[i] *= (self->offset + val) * self->amplitude;
-	any_nonzero = (any_nonzero != 0) | (val != 0);
-	accum += inc4;
+	const v4sf val = (self->offset + get_sample(self->waveform, accum4, shape4)) * self->amplitude;
+	out[i] *= val;
+	any_nonzero = (any_nonzero != 0) | (out[i] != 0);
+	accum4 += inc4;
   }
+
+  *accum = fmod(accum4[3], period);
   
-  return any_nonzero[0] != 0 || any_nonzero[1] != 0 || any_nonzero[2] != 0 || any_nonzero[3] != 0;
+  return !v4si_eq(any_nonzero, V4SI_ZERO);
+}
+
+static gboolean mod_value_array_f(GstBtPropSrateControlSource* super, GstClockTime timestamp, GstClockTime interval,
+								   guint n_values, gfloat* values) {
+  GstBtLfoFloat* self = (GstBtLfoFloat*)super;
+  gfloat accum = timestamp_to_accum(self, timestamp);
+  return gstbt_lfo_float_mod_value_array_accum(self, &accum, interval, n_values, values);
 }
 
 static void get_value_array_f(GstBtPropSrateControlSource* super, GstClockTime timestamp, GstClockTime interval,
@@ -122,7 +179,7 @@ void gstbt_lfo_float_props_add(GObjectClass* const gobject_class, guint* idx) {
   g_object_class_install_property(
 	gobject_class,
 	(*idx)++,
-	g_param_spec_float("lfo-shape", "LFO Shape", "LFO Shape", 0, 100, 1, flags)
+	g_param_spec_float("lfo-shape", "LFO Shape", "LFO Shape", 0, 1, 1, flags)
 	);
   
   g_object_class_install_property(
@@ -140,7 +197,8 @@ void gstbt_lfo_float_props_add(GObjectClass* const gobject_class, guint* idx) {
   g_object_class_install_property(
 	gobject_class,
 	(*idx)++,
-	g_param_spec_uint("lfo-waveform", "LFO Wave", "LFO Waveform", 0, 3, 0, flags)
+	g_param_spec_enum("lfo-waveform", "LFO Wave", "LFO Waveform",
+					  gst_bt_lfo_float_waveform_get_type(), GSTBT_LFO_FLOAT_WAVEFORM_SINE, flags)
 	);
 }
 

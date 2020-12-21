@@ -55,7 +55,10 @@ gboolean bt_properties_simple_get(const BtPropertiesSimple* self, GParamSpec* ps
 		g_value_set_double(value, *(gdouble*)pspec_var->var);
 		break;
 	  default:
-		g_assert(FALSE);
+		if (g_type_is_a(pspec_var->pspec->value_type, G_TYPE_ENUM))
+		  g_value_set_enum(value, *(guint*)pspec_var->var);
+		else
+		  g_assert(FALSE);
 	  }
 	  return TRUE;
 	}
@@ -82,7 +85,10 @@ gboolean bt_properties_simple_set(const BtPropertiesSimple* self, GParamSpec* ps
 		(*(gdouble*)pspec_var->var) = g_value_get_double(value);
 		break;
 	  default:
-		g_assert(FALSE);
+		if (g_type_is_a(pspec_var->pspec->value_type, G_TYPE_ENUM))
+		  (*(guint*)pspec_var->var) = g_value_get_enum(value);
+		else
+		  g_assert(FALSE);
 	  }
 	  return TRUE;
 	}
@@ -105,9 +111,10 @@ void bt_properties_simple_dispose(GObject* const obj) {
   BtPropertiesSimple* const self = (BtPropertiesSimple*)obj;
   for (guint i = 0; i < self->props->len; ++i) {
 	PspecVar* const pspec_var = &g_array_index(self->props, PspecVar, i);
-	g_object_unref(pspec_var->pspec);
+	g_clear_object(&pspec_var->pspec);
   }
   g_array_unref(self->props);
+  self->props = NULL;
 }
 
 void bt_properties_simple_class_init(BtPropertiesSimpleClass* const klass) {

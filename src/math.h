@@ -35,11 +35,10 @@ const float F2PI;
 
 const v4ui V4UI_UNIT;
 const v4ui V4UI_ZERO;
-const v4ui V4UI_MAX;
-
-#define V4SI_UNIT ((v4si)(V4UI_UNIT))
-#define V4SI_ZERO ((v4si)(V4UI_ZERO))
-#define V4SI_MAX ((v4si)(V4UI_MAX))
+const v4ui V4UI_TRUE;
+#define V4SI_UNIT ((v4si)V4UI_UNIT)
+#define V4SI_ZERO ((v4si)V4UI_ZERO)
+#define V4SI_TRUE ((v4si)V4UI_TRUE)
 
 const v4sf V4SF_UNIT;
 const v4sf V4SF_ZERO;
@@ -142,8 +141,20 @@ static inline v4sf fabs4f(v4sf f) {
   return (v4sf)((v4si)f & ~V4SF_SIGN_MASK);
 }
 
-static inline v4si sign4f(v4sf f) {
+static inline v4sf truncmin4f(v4sf x, v4sf min) {
+  return bitselect4f(fabs4f(x) < min, V4SF_ZERO, x);
+}
+
+static inline v4si signbit4f(v4sf f) {
   return (v4si)f & V4SF_SIGN_MASK;
+}
+
+static inline v4sf withsignbit4f(v4sf f, v4si cond) {
+  return (v4sf)(((v4si)f & ~V4SF_SIGN_MASK) | (cond & V4SF_SIGN_MASK));
+}
+
+static inline v4sf copysign4f(v4sf dst, v4sf src) {
+  return (v4sf)(((v4si)dst & ~V4SF_SIGN_MASK) | ((v4si)src & V4SF_SIGN_MASK));
 }
 
 static inline v4sf trunc4f(const v4sf f) {
@@ -166,21 +177,35 @@ static inline v4sf frexp4f(v4sf f, v4si* exp) {
   return (v4sf)((fi & V4UI_FLOAT_INV_EXPONENT) | V4UI_FLOAT_0P5); 
 }
 
+// Multiply x by 2**n.
 // Adapted from glibc.
-// No checks, such as NaN, under/overflow, etc!
-// Returns 0 for all denormal numbers.
-// Basically, mask and shift to extract the exponent, add 'n' to it, and mask and shift it back in.
+// Returns 0 for denormal numbers.
+// Basically, mask and shift to extract the exponent, add 'n' to it, and mask and shift it back in while checking for
+// over/underflow of the exponent.
 static inline v4sf ldexp4f(v4sf x, v4si n) {
   v4si ix = (v4si)x;
   v4si k = (ix & V4UI_FLOAT_EXPONENT) >> 23;		/* extract exponent */
 
-  /* Assuming k and n are bounded such that k = k+n does not overflow.  */
+  /* Assuming k and n are bounded such that k = k+n does not overflow. */
 
+  v4si newk = k+n;
   // Clear exponent and insert k as the new exponent.
-  ix = (ix & V4UI_FLOAT_INV_EXPONENT) | ((k + n)<<23);
+  ix = (ix & V4UI_FLOAT_INV_EXPONENT) | (newk<<23);
 
-  // When k == 0, then x is denormal or zero.
-  return bitselect4f(k == 0, V4SF_ZERO, (v4sf)ix);
+  //intf("!@# %d %d %d\n", k[0], n[0], newk[0]);
+  return bitselect4f(
+	k == 0, // When k == 0, then x is denormal or zero. Must check original k as 0**x == 0.
+	V4SF_ZERO,
+	bitselect4f(
+	  newk <= 0,
+	  copysign4f(V4SF_UNIT * 1.0e-30f, x),
+	  bitselect4f(
+		newk > 254,
+		copysign4f(V4SF_UNIT * 1.0e+30f, x),
+		(v4sf)ix
+		)
+	  )
+	);
 }
 
 // From Cephes library
@@ -210,7 +235,7 @@ static inline void denormals_restore(unsigned csr) {
 
 // Returns 0.0f when f is a denormal number.
 static inline v4sf denorm_strip4f(v4sf f) {
-  return bitselect4f(((v4si)f & V4UI_FLOAT_EXPONENT) == 0, V4SF_ZERO, f);
+  return bitselect4f(((v4ui)f & V4UI_FLOAT_EXPONENT) == V4SI_ZERO, V4SF_ZERO, f);
 }
 
 // Adapted from Cephes library / Julien Pommier's fast SSE math functions.
@@ -222,15 +247,18 @@ v4sf log4f(v4sf x);
 // This function will return incorrect values for denormal numbers.
 v4sf exp4f(v4sf x);
 
+v4sf powposexp4f(v4sf base, v4sf positive_exponent);
+
+// Returns zero if base is negative and exponent is not an integer.
 v4sf pow4f(v4sf base, v4sf exponent);
 
-static inline v4sf sin4f_method(const v4sf x) {
+inline v4sf sin4f_method(const v4sf x) {
   return sin4f(x);
   //return _ZGVbN4v_sinf(x);
 }
 
 // Sine with range  0 -> 1
-static inline v4sf sin014f(const v4sf x) {
+inline v4sf sin014f(const v4sf x) {
   return (1.0f + sin4f_method(x)) * 0.5f;
 }
 
@@ -258,61 +286,4 @@ static inline v4sf window_sharp_cosine4(v4sf sample, v4sf sample_center, gfloat 
     );
 }
 
-static inline void math_test(void) {
-  {
-    v4sf input = {-1.0f, 0.0f, 0.0f, 2.0f};
-    v4sf expected = {0.5f, 1.0f, 1.0f, 4.0f};
-    v4sf result = pow4f(2 * V4SF_UNIT, input);
-    for (int i = 0; i < 4; ++i) {
-      printf("%x %x %x\n", ((v4si)input)[i], ((v4si)result)[i], ((v4si)expected)[i]);
-      printf("%.20f %.20f %.20f\n", input[i], result[i], expected[i]);
-    }
-    g_assert(v4sf_eq(result, expected));
-  }
-
-  {
-    v4sf input = {-1.0f, 1.0f, 100.5f, -100.5f};
-    v4sf expected = {1.0f, 1.0f, 100.5f, 100.5f};
-    g_assert(v4sf_eq(fabs4f(input), expected));
-  }
-
-  {
-    v4si inputa = {1, 2, 3, 4};
-    v4si inputb = {100, 200, 300, 400};
-    v4si expected = {1, 2, 300, 400};
-    g_assert(v4si_eq(bitselect4(inputa <= 2, inputa, inputb), expected));
-  }
-  
-  {
-    v4sf inputa = {1.0f, 2.0f, 3.0f, 4.0f};
-    v4sf inputb = {100.0f, 200.0f, 300.0f, 400.0f};
-    v4sf expected = {1.0f, 2.0f, 300.0f, 400.0f};
-    g_assert(v4sf_eq(bitselect4f(inputa <= 2, inputa, inputb), expected));
-  }
-
-  {
-    v4sf input = {1.123f, 2.345f, 3.567f, 4.789f};
-    v4sf expecteda;
-    v4si expectedb = {};
-    v4sf resulta;
-    v4si resultb = {};
-    for (int i = 0; i < 4; ++i) {
-      expecteda[i] = frexpf(input[i], &expectedb[i]);
-    }
-	resulta = frexp4f(input, &resultb);
-	g_assert(v4sf_eq(resulta, expecteda));
-	g_assert(v4si_eq(resultb, expectedb));
-  }
-
-  {
-    v4sf inputa = {1.0f, -2.0f, 0.0f, -4.0f};
-    v4si inputb = {0, 1, 2, -3};
-    v4sf expected = {1.0f, -4.0f, 0.0f, -0.5f};
-    v4sf result = ldexp4f(inputa, inputb);
-    for (int i = 0; i < 4; ++i) {
-      //printf("%x %x %x\n", ((v4si)input)[i], ((v4si)result)[i], ((v4si)expected)[i]);
-      printf("%.20f %d %.20f %.20f\n", inputa[i], inputb[i], result[i], expected[i]);
-    }
-    g_assert(v4sf_eq(result, expected));
-  }
-}
+void math_test(void);

@@ -35,6 +35,7 @@
 #include <math.h>
 #include <stdio.h>
 #include <unistd.h>
+#include <signal.h>
 
 GType gstbt_additive_get_type(void);
 #define GSTBT_ADDITIVE(obj) (G_TYPE_CHECK_INSTANCE_CAST((obj),gstbt_additive_get_type(),GstBtAdditive))
@@ -407,9 +408,10 @@ static gboolean _process(GstBtAudioSynth* synth, GstBuffer* gstbuf, GstMapInfo* 
 
   srate_props_fill(self, synth->running_time, 1e9L / rate);
 
-  if (is_machine_silent(self)) {
-    memset(info->data, 0, synth->generate_samples_per_buffer * sizeof(guint16));
+  v4sf* const buf4 = (v4sf*)self->buf;
+  memset(buf4, 0, nbuf4elements*sizeof(typeof(*buf4)));
 
+  if (is_machine_silent(self)) {
     // Note: if FALSE is returned here then downstream effects stop making noise.
     return TRUE;
   }
@@ -419,10 +421,6 @@ static gboolean _process(GstBtAudioSynth* synth, GstBuffer* gstbuf, GstMapInfo* 
     srate_bend[i] = freq_note + freq_note * srate_bend[i];
   }
   
-  v4sf* const buf4 = (v4sf*)self->buf;
-
-  memset(buf4, 0, nbuf4elements*sizeof(typeof(*buf4)));
-
   const v4sf* const srate_freq_max = (v4sf*)srate_prop_buf_get(self, PROP_FREQ_MAX);
   const v4sf* const srate_ampfreq_scale_idx_mul = (v4sf*)srate_prop_buf_get(self, PROP_AMPFREQ_SCALE_IDX_MUL);
   const v4sf* const srate_amp_boost_center = (v4sf*)srate_prop_buf_get(self, PROP_AMP_BOOST_CENTER);
@@ -445,17 +443,17 @@ static gboolean _process(GstBtAudioSynth* synth, GstBuffer* gstbuf, GstMapInfo* 
 
     for (int i = 0; i < nbuf4elements; ++i) {
       const v4sf hscale_freq = srate_ampfreq_scale_idx_mul[i] * (gfloat)j + srate_ampfreq_scale_offset[i];
-	  if (v4si_eq(hscale_freq < 0, V4SI_MAX)) {
-		continue;
-	  }
 	  
       const v4sf freq_note_bent = srate_bend[i];
       const v4sf freq_overtone = freq_note_bent * hscale_freq;
     
       // Limit the number of overtones to reduce aliasing.
-      if (v4si_eq(freq_overtone > srate_freq_max[i], V4SI_MAX))
-		continue;
-    
+	  const v4si mute_sample = (freq_overtone <= 0) | (freq_overtone > srate_freq_max[i]);
+      if (v4si_eq(mute_sample, V4SI_TRUE))
+		continue; // broad check to save CPU
+	  
+	  const v4sf amp_mute_sample = bitselect4f(mute_sample, V4SF_ZERO, V4SF_UNIT);
+	  
       v4sf amp_boost = srate_amp_boost_db[i];
 	  
 	  if (!v4sf_eq(amp_boost, V4SF_ZERO)) {
@@ -484,8 +482,8 @@ static gboolean _process(GstBtAudioSynth* synth, GstBuffer* gstbuf, GstMapInfo* 
 	  f_rm[1] = f_rm[0] + inc_rm[1];
 	  f_rm[2] = f_rm[1] + inc_rm[2];
 	  f_rm[3] = f_rm[2] + inc_rm[3];
-	  
-      v4sf sample = (amp_boost + hscale_amp) * sin4f(f);
+
+      v4sf sample = (amp_boost + hscale_amp) * amp_mute_sample * sin4f(f);
 	  if (!v4sf_eq(srate_ringmod_rate[i], V4SF_ZERO))
 		sample *= powsin4f(f_rm, srate_ringmod_rate[i]);
 	  buf4[i] += sample;
