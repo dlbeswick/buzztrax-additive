@@ -36,13 +36,10 @@ v4sf sin4f(v4sf x) {
   v4si sign = x < 0;
   x = fabs4f(x);
 
-  /* integer part of x/PIO4 */
-  v4sf y = floor4f(F4OPI * x);
-
-  /* note: integer overflow guard removed */
+  v4si j = __builtin_convertvector(F4OPI * x, v4si); /* integer part of x/PIO4 */
+  v4sf y = __builtin_convertvector(j, v4sf);
   
-  /* convert to integer for tests on the phase angle */
-  v4si j = __builtin_convertvector(y, v4si);
+  /* note: integer overflow guard removed */
   
 /* map zeros to origin */
   {
@@ -75,7 +72,7 @@ v4sf sin4f(v4sf x) {
   y = bitselect4f(((j-1)&3) < 2, patha, pathb);
 
   /*
-	x<0 octant result_sign
+	x<0 octant result_multiplier
 	1 0 -1
 	1 1 -1
 	1 2 -1
@@ -94,9 +91,9 @@ v4sf sin4f(v4sf x) {
 	0 7 -1
 
 	((x < 0) && (j <= 3)) || ((x >= 0) && (j > 3))
-	= x < 0 XOR j < 3
+	= x < 0 XOR j > 3
    */
-  return bitselect4f(~(sign ^ (j > 3)), -y, y);
+  return bitselect4f(sign ^ (j > 3), -y, y);
 }
 
 v4sf cos4f(v4sf x)
@@ -149,6 +146,38 @@ v4sf cos4f(v4sf x)
 	7 1
    */
   return bitselect4f(j+2 > 3, -y, y);
+}
+
+void sincos4f(v4sf x, v4sf* out_sin, v4sf* out_cos) {
+  v4si sign = x < 0;
+  x = fabs4f(x);
+
+  v4si j = __builtin_convertvector(F4OPI * x, v4si); /* integer part of x/PIO4 */
+  v4sf y = __builtin_convertvector(j, v4sf);
+  
+/* map zeros to origin */
+  {
+	const v4si j_and_1 = (j & 1) == 1;
+	y = bitselect4f(j_and_1, y + 1.0f, y);
+	j = bitselect4(j_and_1, j + 1, j);
+  }
+
+  j = j & 07; /* octant modulo 360 degrees */
+
+/* Extended precision modular arithmetic */
+  const v4sf z = ((x - y * V4SF_DP1) - y * V4SF_DP2) - y * V4SF_DP3;
+
+  const v4sf zz = z * z;
+
+  const v4sf pathasin = 1.0f - 0.5f*zz + zz * zz * ((V4SF_COSCOF_P0 * zz + V4SF_COSCOF_P1) * zz + V4SF_COSCOF_P2);
+  const v4sf pathbsin = z + z * zz * ((V4SF_SINCOF_P0 * zz + V4SF_SINCOF_P1) * zz + V4SF_SINCOF_P2);
+
+  const v4si path_select = ((j-1)&3) < 2;
+  
+  *out_sin = bitselect4f(path_select, pathasin, pathbsin);
+  *out_sin = bitselect4f(sign ^ (j > 3), -*out_sin, *out_sin);
+  *out_cos = bitselect4f(path_select, pathbsin, pathasin);
+  *out_cos = bitselect4f(j+2 > 3, -*out_cos, *out_cos);
 }
 
 v4sf pow4f(const v4sf base, const v4sf exponent) {
@@ -239,6 +268,11 @@ void math_test(void) {
   g_assert(v4sf_eq(ldexp4f(V4SF_UNIT, V4SI_UNIT * -128), V4SF_UNIT * 1.0e-30f));
   g_assert(v4sf_eq(ldexp4f(V4SF_UNIT, V4SI_UNIT * 128), V4SF_UNIT * 1.0e+30f));
 	
+  g_assert(v4sf_eq(withsignbit4f(V4SF_UNIT, V4SI_TRUE), -V4SF_UNIT));
+  g_assert(v4sf_eq(withsignbit4f(-V4SF_UNIT, V4SI_TRUE), -V4SF_UNIT));
+  g_assert(v4sf_eq(withsignbit4f(V4SF_UNIT, V4SI_ZERO), V4SF_UNIT));
+  g_assert(v4sf_eq(withsignbit4f(-V4SF_UNIT, V4SI_ZERO), V4SF_UNIT));
+  
   g_assert(v4sf_eq(copysign4f(V4SF_UNIT, V4SF_UNIT), V4SF_UNIT));
   g_assert(v4sf_eq(copysign4f(-V4SF_UNIT, V4SF_UNIT), V4SF_UNIT));
   g_assert(v4sf_eq(copysign4f(V4SF_UNIT, -V4SF_UNIT), -V4SF_UNIT));

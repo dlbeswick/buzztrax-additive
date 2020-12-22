@@ -65,6 +65,8 @@ static gfloat timestamp_to_accum(const GstBtLfoFloat* self, GstClockTime time) {
   }
 }
 
+// Return the period of the waveform in units expected by the waveform.
+// I.e. period of the sine waveform is expressed in radians.
 static gfloat get_accum_period(const GstBtLfoFloat* self) {
   switch (self->waveform) {
   case GSTBT_LFO_FLOAT_WAVEFORM_SINE:
@@ -83,12 +85,25 @@ static gfloat get_shape(const GstBtLfoFloat* self) {
   }
 }
 
+// 0 <= accum < get_accum_period()
 static inline v4sf get_sample(const GstBtLfoFloatWaveform waveform, const v4sf accum, const v4sf shape) {
   switch (waveform) {
   case GSTBT_LFO_FLOAT_WAVEFORM_SINE:
 	return powsin4f(accum, shape);
   case GSTBT_LFO_FLOAT_WAVEFORM_SQUARE:
-	return bitselect4f(accum < shape, -V4SF_UNIT, V4SF_UNIT);
+	return -1 + bitselect4f(accum < shape, -V4SF_UNIT, V4SF_UNIT) * 2;
+  case GSTBT_LFO_FLOAT_WAVEFORM_SAW: {
+    GST_INFO("%f %f", accum[0], max4f(-V4SF_UNIT, -1 + (1 - ((1-accum) * tan4f((gfloat)G_PI/2*shape))) * 2)[0]);
+	return bitselect4f(
+      shape == 1.0f,
+      V4SF_ZERO,
+      bitselect4f(
+        shape == 0.0f,
+        V4SF_UNIT,
+        max4f(-V4SF_UNIT, -1 + (1 - ((1-accum) * tan4f(FPI/2*shape))) * 2)
+        )
+      );
+  }
   default:
 	return V4SF_ZERO;
   }

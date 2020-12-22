@@ -30,7 +30,7 @@ typedef gint v4si __attribute__ ((vector_size (16)));
 typedef guint v4ui __attribute__ ((vector_size (16)));
 typedef gint16 v4ss __attribute__ ((vector_size (8)));
 
-#define FPI = (gfloat)G_PI;
+#define FPI ((gfloat)G_PI)
 const float F2PI;
 
 const v4ui V4UI_UNIT;
@@ -150,7 +150,7 @@ static inline v4si signbit4f(v4sf f) {
 }
 
 static inline v4sf withsignbit4f(v4sf f, v4si cond) {
-  return (v4sf)(((v4si)f & ~V4SF_SIGN_MASK) | (cond & V4SF_SIGN_MASK));
+  return (v4sf)((v4si)f ^ (((v4si)f ^ cond) & V4SF_SIGN_MASK));
 }
 
 static inline v4sf copysign4f(v4sf dst, v4sf src) {
@@ -241,6 +241,14 @@ static inline v4sf denorm_strip4f(v4sf f) {
 // Adapted from Cephes library / Julien Pommier's fast SSE math functions.
 v4sf sin4f(v4sf x);
 v4sf cos4f(v4sf x);
+void sincos4f(v4sf x, v4sf* sin, v4sf* cos);
+
+static inline v4sf tan4f(v4sf x) {
+  v4sf sinv,cosv;
+  sincos4f(x,&sinv,&cosv);
+  return sinv / cosv;
+}
+
 v4sf log4f(v4sf x);
 
 // Domain checks removed: -103.278929903431851103 < x < 88.72283905206835
