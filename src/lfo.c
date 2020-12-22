@@ -93,7 +93,6 @@ static inline v4sf get_sample(const GstBtLfoFloatWaveform waveform, const v4sf a
   case GSTBT_LFO_FLOAT_WAVEFORM_SQUARE:
 	return -1 + bitselect4f(accum < shape, -V4SF_UNIT, V4SF_UNIT) * 2;
   case GSTBT_LFO_FLOAT_WAVEFORM_SAW: {
-    GST_INFO("%f %f", accum[0], max4f(-V4SF_UNIT, -1 + (1 - ((1-accum) * tan4f((gfloat)G_PI/2*shape))) * 2)[0]);
 	return bitselect4f(
       shape == 1.0f,
       V4SF_ZERO,
