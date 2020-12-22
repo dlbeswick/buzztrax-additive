@@ -111,7 +111,7 @@ static inline v4sf get_sample(const GstBtLfoFloatWaveform waveform, const v4sf a
 }
 
 gboolean mod_value_array_accum(GstBtLfoFloat* self, gfloat* accum, GstClockTime interval, guint n_values,
-                               gfloat* values) {
+                               v4sf* values) {
   if (self->frequency == 0.0f)
 	return FALSE;
   
@@ -130,9 +130,9 @@ gboolean mod_value_array_accum(GstBtLfoFloat* self, gfloat* accum, GstClockTime 
 	const v4sf val = (self->offset + get_sample(self->waveform, accum4, shape4)) * self->amplitude;
     for (guint j = 0; j < 4; ++j) {
       self->integrate = alpha*val[j] + (1 - alpha)*self->integrate;
-      out[i][j] *= self->integrate;
+      out[n_values/4*i][j] *= self->integrate;
     }
-	any_nonzero = (any_nonzero != 0) | (out[i] != 0);
+	any_nonzero = (any_nonzero != 0) | (out[n_values/4*i] != 0);
 	accum4 += inc4;
   }
   
@@ -142,22 +142,22 @@ gboolean mod_value_array_accum(GstBtLfoFloat* self, gfloat* accum, GstClockTime 
 }
 
 gboolean gstbt_lfo_float_mod_value_array_accum(GstBtLfoFloat* self, GstClockTime interval, guint n_values,
-                                               gfloat* values) {
+                                               v4sf* values) {
   return mod_value_array_accum(self, &self->accum, interval, n_values, values);
 }
 
 static gboolean mod_value_array_f(GstBtPropSrateControlSource* super, GstClockTime timestamp, GstClockTime interval,
-								   guint n_values, gfloat* values) {
+								   guint n_values, v4sf* values) {
   GstBtLfoFloat* self = (GstBtLfoFloat*)super;
   gfloat accum = timestamp_to_accum(self, timestamp);
-  return mod_value_array_accum(self, &accum, interval, n_values, values);
+  return mod_value_array_accum(self, &accum, interval, n_values, (v4sf*)values);
 }
 
 static void get_value_array_f(GstBtPropSrateControlSource* super, GstClockTime timestamp, GstClockTime interval,
 							   guint n_values, gfloat* values) {
   for (guint i = 0; i < n_values; ++i)
 	values[i] = 1.0f;
-  mod_value_array_f(super, timestamp, interval, n_values, values);
+  mod_value_array_f(super, timestamp, interval, n_values, (v4sf*)values);
 }
 
 static void get_value_f(GstBtPropSrateControlSource* super, GstClockTime timestamp, gfloat* value) {

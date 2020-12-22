@@ -34,7 +34,7 @@ void gstbt_prop_srate_cs_get_value_array_f(GstBtPropSrateControlSource* self, Gs
 }
 
 gboolean gstbt_prop_srate_cs_mod_value_array_f(GstBtPropSrateControlSource* self, GstClockTime timestamp,
-											   GstClockTime interval, guint n_values, gfloat* values) {
+											   GstClockTime interval, guint n_values, v4sf* values) {
   GstBtPropSrateControlSourceClass* klass = GSTBT_PROP_SRATE_CONTROL_SOURCE_GET_CLASS(self);
   g_assert(klass->mod_value_array_f != NULL);
   return klass->mod_value_array_f(self, timestamp, interval, n_values, values);
