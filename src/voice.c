@@ -112,9 +112,7 @@ void gstbt_additivev_get_value_array_f_for_prop(
 	  (GstBtPropSrateControlSource*)self->adsr, timestamp, interval, n_values,
 	  values + n_values * idx);
 	
-	any_nonzero = gstbt_prop_srate_cs_mod_value_array_f(
-	  (GstBtPropSrateControlSource*)self->lfo, timestamp, interval, n_values,
-	  values + n_values * idx)
+	any_nonzero = gstbt_lfo_float_mod_value_array_accum(self->lfo, interval, n_values, values + n_values * idx)
 	  || any_nonzero;
 
 	props_active[idx] = props_active[idx] || any_nonzero;
