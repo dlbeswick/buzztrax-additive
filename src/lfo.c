@@ -81,7 +81,7 @@ static gfloat get_accum_period(const GstBtLfoFloat* self) {
 static gfloat get_shape(const GstBtLfoFloat* self) {
   switch (self->waveform) {
   case GSTBT_LFO_FLOAT_WAVEFORM_SINE:
-	return self->shape * 10.f;
+	return powf(self->shape+0.5, 8);
   default:
 	return self->shape;
   }
@@ -205,7 +205,7 @@ void gstbt_lfo_float_props_add(GObjectClass* const gobject_class, guint* idx) {
   g_object_class_install_property(
 	gobject_class,
 	(*idx)++,
-	g_param_spec_float("lfo-shape", "LFO Shape", "LFO Shape", 0, 1, 1, flags)
+	g_param_spec_float("lfo-shape", "LFO Shape", "LFO Shape", 0, 1, 0.5f, flags)
 	);
   
   g_object_class_install_property(

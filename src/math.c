@@ -182,13 +182,17 @@ void sincos4f(v4sf x, v4sf* out_sin, v4sf* out_cos) {
 
 v4sf pow4f(const v4sf base, const v4sf exponent) {
   const v4si exponent_int = __builtin_convertvector(exponent,v4si);
-  const v4si exponent_is_fractional = __builtin_convertvector(exponent_int,v4sf) != exponent;
-  const v4si base_sign = signbit4f(base);
-  const v4sf r = exp4f(exponent*log4f(fabs4f(base))); 
+  const v4si is_neg_base = base < 0;
+  
+  // Only integer negative exponents produce a real value when the base is also negative.
+  const v4sf exponent_fixed =
+    bitselect4f(is_neg_base & (exponent < 0), __builtin_convertvector(exponent_int,v4sf), exponent);
+  
+  const v4sf r = exp4f(exponent_fixed*log4f(fabs4f(base))); 
   return bitselect4f(
-    (base == V4SF_ZERO) | ((base_sign != 0) & (exponent_is_fractional)),
+    base == V4SF_ZERO,
     V4SF_ZERO,
-    withsignbit4f(r, base_sign & ((exponent_int & 1) != 0))
+    withsignbit4f(r, is_neg_base & ((exponent_int & 1) != 0))
     );
 }
 
@@ -297,7 +301,7 @@ void math_test(void) {
 
   {
     v4sf input = {-1.5f, 0.0f, 3.0f, 2.0f};
-    v4sf expected = {0.0f, 1.0f, -8.0f, 4.0f};
+    v4sf expected = {-0.5f, 1.0f, -8.0f, 4.0f};
     v4sf result = pow4f(-2 * V4SF_UNIT, input);
     for (int i = 0; i < 4; ++i) {
       printf("%x %x %x\n", ((v4si)input)[i], ((v4si)result)[i], ((v4si)expected)[i]);

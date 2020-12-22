@@ -255,9 +255,8 @@ v4sf log4f(v4sf x);
 // This function will return incorrect values for denormal numbers.
 v4sf exp4f(v4sf x);
 
-v4sf powposexp4f(v4sf base, v4sf positive_exponent);
-
 // Returns zero if base is negative and exponent is not an integer.
+// No mathematical basis to this; it just helps simplify the use of real parameters as exponents.
 v4sf pow4f(v4sf base, v4sf exponent);
 
 inline v4sf sin4f_method(const v4sf x) {
