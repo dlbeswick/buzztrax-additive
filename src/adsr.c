@@ -16,7 +16,7 @@
   along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
-#include "src/envelope.h"
+#include "src/adsr.h"
 #include "src/propsratecontrolsource.h"
 #include "src/math.h"
 #include "src/properties_simple.h"

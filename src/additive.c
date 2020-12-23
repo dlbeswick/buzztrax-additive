@@ -19,10 +19,10 @@
 #include "config.h"
 #include "src/genums.h"
 
-#include "src/envelope.h"
+#include "src/adsr.h"
+#include "src/debug.h"
 #include "src/math.h"
 #include "src/voice.h"
-#include "src/debug.h"
 
 #include "libbuzztrax-gst/audiosynth.h"
 #include "libbuzztrax-gst/childbin.h"
@@ -331,15 +331,15 @@ static inline gfloat sin01(const gfloat x) {
   return (1.0f + sin(x)) * 0.5f;
 }
 
-static gfloat* srate_prop_buf_get(const GstBtAdditive* const self, PropsSrate prop) {
+static gfloat* srate_prop_buf_get(const GstBtAdditive* const self, AdditivePropsSrate prop) {
   return self->buf_srate_props + self->parent.generate_samples_per_buffer * ((guint)prop-1);
 }
 
-static gboolean srate_prop_is_controlled(const GstBtAdditive* const self, PropsSrate prop) {
+static gboolean srate_prop_is_controlled(const GstBtAdditive* const self, AdditivePropsSrate prop) {
   return self->props_srate_controlled[(guint)prop-1];
 }
 
-static gboolean srate_prop_is_nonzero(const GstBtAdditive* const self, PropsSrate prop) {
+static gboolean srate_prop_is_nonzero(const GstBtAdditive* const self, AdditivePropsSrate prop) {
   return self->props_srate_nonzero[(guint)prop-1];
 }
 
@@ -406,7 +406,7 @@ static gboolean _process(GstBtAudioSynth* synth, GstBuffer* gstbuf, GstMapInfo* 
   const int nbufelements = synth->generate_samples_per_buffer;
   const int nbuf4elements = nbufelements/4;
 
-  srate_props_fill(self, synth->running_time, 1e9L / rate);
+  srate_props_fill(self, synth->running_time, GST_SECOND / rate);
 
   v4sf* const buf4 = (v4sf*)self->buf;
   memset(buf4, 0, nbuf4elements*sizeof(typeof(*buf4)));

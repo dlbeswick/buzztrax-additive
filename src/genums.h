@@ -36,8 +36,8 @@ typedef enum {
   PROP_RINGMOD_OT_OFFSET,
   PROP_BEND,
   PROP_VOL,
-  N_PROPERTIES_SRATE
-} PropsSrate;
+  N_PROPERTIES_SRATE /*< skip >*/
+} AdditivePropsSrate;
 
 typedef enum
 {

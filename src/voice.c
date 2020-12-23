@@ -17,7 +17,7 @@
 */
 
 #include "src/voice.h"
-#include "src/envelope.h"
+#include "src/adsr.h"
 #include "src/lfo.h"
 #include "src/genums.h"
 #include "src/generated/generated-genums.h"
@@ -142,7 +142,7 @@ static void gstbt_additivev_class_init(GstBtAdditiveVClass* const klass) {
 
   properties[PROP_IDX_TARGET_PROP] =
 	g_param_spec_enum("idx-target-prop", "Target Prop.", "Target Parent Property",
-					  props_srate_get_type(), PROP_VOL, flags);
+					  additive_props_srate_get_type(), PROP_VOL, flags);
 
   g_object_class_install_properties(gobject_class, N_PROPERTIES, properties);
 

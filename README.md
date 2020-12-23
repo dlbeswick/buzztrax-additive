@@ -50,3 +50,5 @@ Disabling denormal floats gave a minor performance boost.
 Using v4sf consts instead of float literals in vectorised code made no difference -- the compiler is smart enough to choose the best representation and isn't creating overhead in converting vectors back and forth.
 
 In inner loops, it's still generally better to avoid heavy computation using branches rather than trying to avoid all branching.
+
+Striping the buffers for the "s-rate" control parameters provided no benefit, and neither did calculating all overtones for each sample before moving to the next sample (instead of calculating all samples for each overtone before moving to the next overtone.) The process doesn't really seem bound by memory accesses, or the data fits in the cache anyway.
