@@ -49,6 +49,7 @@ const v4sf V4SF_MIN_NORM_POS;
 const v4ui V4UI_FLOAT_0P5;
 const v4ui V4UI_FLOAT_EXPONENT;
 const v4ui V4UI_FLOAT_INV_EXPONENT;
+const v4sf MINLOGF;
 
 // libmvec
 // https://stackoverflow.com/questions/40475140/mathematical-functions-for-simd-registers
@@ -239,9 +240,156 @@ static inline v4sf denorm_strip4f(v4sf f) {
 }
 
 // Adapted from Cephes library / Julien Pommier's fast SSE math functions.
-v4sf sin4f(v4sf x);
-v4sf cos4f(v4sf x);
-void sincos4f(v4sf x, v4sf* sin, v4sf* cos);
+// Adapted from Cephes library / Julien Pommier's fast SSE math functions.
+static inline v4sf sin4f(v4sf x) {
+/* make argument positive but save the sign */
+  v4si sign = x < 0;
+  x = fabs4f(x);
+
+  v4si j = __builtin_convertvector(4/(gfloat)G_PI * x, v4si); /* integer part of x/PIO4 */
+  v4sf y = __builtin_convertvector(j, v4sf);
+  
+  /* note: integer overflow guard removed */
+  
+/* map zeros to origin */
+  {
+	const v4si j_and_1 = (j & 1) == 1;
+	y = bitselect4f(j_and_1, y + 1.0f, y);
+	j = bitselect4(j_and_1, j + 1, j);
+  }
+
+  j = j & 07; /* octant modulo 360 degrees */
+
+/* Extended precision modular arithmetic */
+  const v4sf z = ((x - y * V4SF_DP1) - y * V4SF_DP2) - y * V4SF_DP3;
+
+  const v4sf zz = z * z;
+
+  const v4sf patha = 1.0f - 0.5f*zz + zz * zz * ((V4SF_COSCOF_P0 * zz + V4SF_COSCOF_P1) * zz + V4SF_COSCOF_P2);
+  const v4sf pathb = z + z * zz * ((V4SF_SINCOF_P0 * zz + V4SF_SINCOF_P1) * zz + V4SF_SINCOF_P2);
+	
+  /*
+	octant patha/b
+	0 b
+	1 a
+	2 a
+	3 b
+	4 b
+	5 a
+	6 a
+	7 b
+  */
+  y = bitselect4f(((j-1)&3) < 2, patha, pathb);
+
+  /*
+	x<0 octant result_multiplier
+	1 0 -1
+	1 1 -1
+	1 2 -1
+	1 3 -1
+	1 4 1
+	1 5 1
+	1 6 1
+	1 7 1
+	0 0 1
+	0 1 1
+	0 2 1
+	0 3 1
+	0 4 -1
+	0 5 -1
+	0 6 -1
+	0 7 -1
+
+	((x < 0) && (j <= 3)) || ((x >= 0) && (j > 3))
+	= x < 0 XOR j > 3
+   */
+  return bitselect4f(sign ^ (j > 3), -y, y);
+}
+
+static inline v4sf cos4f(v4sf x)
+{
+/* make argument positive */
+  x = fabs4f(x);
+
+  v4si j = __builtin_convertvector(4/(gfloat)G_PI * x, v4si); /* integer part of x/PIO4 */
+  v4sf y = __builtin_convertvector(j, v4sf);
+  
+/* integer and fractional part modulo one octant */
+  {
+	const v4si j_and_1 = (j & 1) != 0;
+	j = bitselect4(j_and_1, j + 1, j);
+	y = bitselect4f(j_and_1, y + 1.0f, y);
+  }
+  
+  j &= 7;
+
+/* Extended precision modular arithmetic */
+  x = ((x - y * V4SF_DP1) - y * V4SF_DP2) - y * V4SF_DP3;
+
+  const v4sf z = x * x;
+
+  const v4sf patha = x + x * z * ((V4SF_SINCOF_P0 * z + V4SF_SINCOF_P1) * z + V4SF_SINCOF_P2);
+  const v4sf pathb = 1.0f - 0.5f*z + z * z * ((V4SF_COSCOF_P0 * z + V4SF_COSCOF_P1) * z + V4SF_COSCOF_P2);
+
+  /*
+	octant patha/b
+	0 b
+	1 a
+	2 a
+	3 b
+	4 b
+	5 a
+	6 a
+	7 b
+  */
+  y = bitselect4f(((j-1)&3) < 2, patha, pathb);
+
+  /*
+	octant result_sign
+	0 1
+	1 1
+	2 -1
+	3 -1
+	4 -1
+	5 -1
+	6 1
+	7 1
+   */
+  return bitselect4f(j+2 > 3, -y, y);
+}
+
+static inline void sincos4f(v4sf x, v4sf* out_sin, v4sf* out_cos) {
+  v4si sign = x < 0;
+  x = fabs4f(x);
+
+  v4si j = __builtin_convertvector(4/(gfloat)G_PI * x, v4si); /* integer part of x/PIO4 */
+  v4sf y = __builtin_convertvector(j, v4sf);
+  
+/* map zeros to origin */
+  {
+	const v4si j_and_1 = (j & 1) == 1;
+	y = bitselect4f(j_and_1, y + 1.0f, y);
+	j = bitselect4(j_and_1, j + 1, j);
+  }
+
+  j = j & 07; /* octant modulo 360 degrees */
+
+/* Extended precision modular arithmetic */
+  const v4sf z = ((x - y * V4SF_DP1) - y * V4SF_DP2) - y * V4SF_DP3;
+
+  const v4sf zz = z * z;
+
+  const v4sf pathasin = 1.0f - 0.5f*zz + zz * zz * ((V4SF_COSCOF_P0 * zz + V4SF_COSCOF_P1) * zz + V4SF_COSCOF_P2);
+  const v4sf pathbsin = z + z * zz * ((V4SF_SINCOF_P0 * zz + V4SF_SINCOF_P1) * zz + V4SF_SINCOF_P2);
+
+  const v4si path_select = ((j-1)&3) < 2;
+  
+  *out_sin = bitselect4f(path_select, pathasin, pathbsin);
+  *out_sin = bitselect4f(sign ^ (j > 3), -*out_sin, *out_sin);
+  *out_cos = bitselect4f(path_select, pathbsin, pathasin);
+  *out_cos = bitselect4f(j+2 > 3, -*out_cos, *out_cos);
+}
+
 
 static inline v4sf tan4f(v4sf x) {
   v4sf sinv,cosv;
@@ -249,23 +397,103 @@ static inline v4sf tan4f(v4sf x) {
   return sinv / cosv;
 }
 
-v4sf log4f(v4sf x);
+static inline v4sf log4f(v4sf x) {
+/* Test for domain */
+  const v4si out_of_domain = x <= 0.0;
+
+  if (v4si_eq(out_of_domain, V4SI_TRUE))
+	return MINLOGF;
+  
+  x = bitselect4f(out_of_domain, MINLOGF, x);
+
+  v4si e;
+  x = frexp4f(x, &e);
+
+  {
+	const v4si x_lt_sqrthf = x < 0.707106781186547524f /*SQRTHF*/;
+	e = bitselect4(x_lt_sqrthf, e - 1, e);
+	x = bitselect4f(x_lt_sqrthf, x + x /* 2x */, x) - 1.0f;
+  }
+  
+  v4sf z = x * x;
+
+  v4sf y =
+	(((((((( 7.0376836292E-2f * x
+			 - 1.1514610310E-1f) * x
+		   + 1.1676998740E-1f) * x
+		  - 1.2420140846E-1f) * x
+		 + 1.4249322787E-1f) * x
+		- 1.6668057665E-1f) * x
+	   + 2.0000714765E-1f) * x
+	  - 2.4999993993E-1f) * x
+	 + 3.3333331174E-1f) * x * z;
+
+  const v4si e_ne_0 = e != 0;
+  const v4sf fe = bitselect4f(e_ne_0, __builtin_convertvector(e, v4sf), V4SF_ZERO);
+  y = bitselect4f(e_ne_0, y + -2.12194440e-4f * fe, y);
+
+  y += -0.5f * z;  /* y - 0.5 x^2 */
+  z = x + y;   /* ... + x  */
+
+  z = bitselect4f(e_ne_0, z + 0.693359375f * fe, z);
+
+  return z;
+}
+
 
 // Domain checks removed: -103.278929903431851103 < x < 88.72283905206835
 // This function will return incorrect values for denormal numbers.
-v4sf exp4f(v4sf x);
+static inline v4sf exp4f(v4sf x) {
+/* Express e**x = e**g 2**n
+ *   = e**g e**( n loge(2) )
+ *   = e**( g + n loge(2) )
+ */
+  v4sf z = floor4f( 1.44269504088896341f /*LOG2EF*/ * x + 0.5f ); /* floor() truncates toward -infinity. */
+  x -= z * 0.693359375f /*C1*/;
+  x -= z * -2.12194440e-4f /*C2*/;
+  v4si n = __builtin_convertvector(z, v4si);
+
+  z = x * x;
+/* Theoretical peak relative error in [-0.5, +0.5] is 4.2e-9. */
+  z =
+	((((( 1.9875691500E-4f  * x
+		  + 1.3981999507E-3f) * x
+		+ 8.3334519073E-3f) * x
+	   + 4.1665795894E-2f) * x
+	  + 1.6666665459E-1f) * x
+	 + 5.0000001201E-1f) * z
+	+ x
+	+ 1.0f;
+
+/* multiply by power of 2 */
+  return ldexp4f(z, n);
+}
 
 // Returns zero if base is negative and exponent is not an integer.
 // No mathematical basis to this; it just helps simplify the use of real parameters as exponents.
-v4sf pow4f(v4sf base, v4sf exponent);
+static inline v4sf pow4f(v4sf base, v4sf exponent) {
+  const v4si exponent_int = __builtin_convertvector(exponent,v4si);
+  const v4si is_neg_base = base < 0;
+  
+  // Only integer negative exponents produce a real value when the base is also negative.
+  const v4sf exponent_fixed =
+    bitselect4f(is_neg_base & (exponent < 0), __builtin_convertvector(exponent_int,v4sf), exponent);
+  
+  const v4sf r = exp4f(exponent_fixed*log4f(fabs4f(base))); 
+  return bitselect4f(
+    base == V4SF_ZERO,
+    V4SF_ZERO,
+    withsignbit4f(r, is_neg_base & ((exponent_int & 1) != 0))
+    );
+}
 
-inline v4sf sin4f_method(const v4sf x) {
+static inline v4sf sin4f_method(const v4sf x) {
   return sin4f(x);
   //return _ZGVbN4v_sinf(x);
 }
 
 // Sine with range  0 -> 1
-inline v4sf sin014f(const v4sf x) {
+static inline v4sf sin014f(const v4sf x) {
   return (1.0f + sin4f_method(x)) * 0.5f;
 }
 
