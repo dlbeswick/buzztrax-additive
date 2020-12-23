@@ -90,7 +90,7 @@ typedef struct
   gfloat accum_rads;
   GstBtToneConversion* tones;
   gfloat* buf;
-  v4sf* buf_srate_props;
+  gfloat* buf_srate_props;
   StateOvertone* states_overtone;
   GstBtAdditiveV* voices[MAX_VOICES];
 
@@ -331,8 +331,8 @@ static inline gfloat sin01(const gfloat x) {
   return (1.0f + sin(x)) * 0.5f;
 }
 
-static v4sf* srate_prop_buf_get(const GstBtAdditive* const self, PropsSrate prop) {
-  return self->buf_srate_props + (guint)prop-1;
+static gfloat* srate_prop_buf_get(const GstBtAdditive* const self, PropsSrate prop) {
+  return self->buf_srate_props + self->parent.generate_samples_per_buffer * ((guint)prop-1);
 }
 
 static gboolean srate_prop_is_controlled(const GstBtAdditive* const self, PropsSrate prop) {
@@ -344,27 +344,27 @@ static gboolean srate_prop_is_nonzero(const GstBtAdditive* const self, PropsSrat
 }
 
 static void srate_props_fill(GstBtAdditive* const self, const GstClockTime timestamp, const GstClockTime interval) {
-  const guint nbufelements4 = self->parent.generate_samples_per_buffer/4;
+  const guint nbufelements = self->parent.generate_samples_per_buffer;
   for (guint i = 0; i < N_PROPERTIES_SRATE; ++i) {
     GValue src = G_VALUE_INIT;
     g_value_init(&src, G_TYPE_FLOAT);
     g_object_get_property((GObject*)self, properties[i+1]->name, &src);
     
-    v4sf value = g_value_get_float(&src) * V4SF_UNIT;
+    gfloat value = g_value_get_float(&src);
     g_value_unset(&src);
 
-    v4sf* const sratebuf = &self->buf_srate_props[i];
-    for (guint j = 0; j < nbufelements4; ++j)
-      sratebuf[nbufelements4*j] = value;
+    gfloat* const sratebuf = &self->buf_srate_props[i * nbufelements];
+    for (guint j = 0; j < self->parent.generate_samples_per_buffer; ++j)
+      sratebuf[j] = value;
   }
 
   memset(self->props_srate_nonzero, 0, sizeof(self->props_srate_nonzero));
   memset(self->props_srate_controlled, 0, sizeof(self->props_srate_controlled));
   
   // Fill this srate buffer with the calculated db-to-gain value.
-  v4sf* const srate_amp_boost_db = srate_prop_buf_get(self, PROP_AMP_BOOST_DB);
-  for (guint i = 0; i < nbufelements4; ++i) {
-    srate_amp_boost_db[nbufelements4*i] = self->amp_boost_db_calc * V4SF_UNIT;
+  gfloat* const srate_amp_boost_db = srate_prop_buf_get(self, PROP_AMP_BOOST_DB);
+  for (guint i = 0; i < nbufelements; ++i) {
+    srate_amp_boost_db[i] = self->amp_boost_db_calc;
   }
   
   for (guint i = 0; i < self->n_voices; ++i) {
@@ -372,7 +372,7 @@ static void srate_props_fill(GstBtAdditive* const self, const GstClockTime times
       self->voices[i],
       timestamp,
       interval,
-      nbufelements4*4,
+      nbufelements,
       self->buf_srate_props,
       self->props_srate_nonzero,
       self->props_srate_controlled
@@ -416,111 +416,88 @@ static gboolean _process(GstBtAudioSynth* synth, GstBuffer* gstbuf, GstMapInfo* 
     return TRUE;
   }
 
-  // Pre-calculate bend values
-  v4sf* srate_bend = (v4sf*)srate_prop_buf_get(self, PROP_BEND);
+  v4sf* const srate_bend = (v4sf*)srate_prop_buf_get(self, PROP_BEND);
   for (guint i = 0; i < nbuf4elements; ++i) {
-    srate_bend[nbuf4elements*i] = freq_note + freq_note * srate_bend[nbuf4elements*i];
+    srate_bend[i] = freq_note + freq_note * srate_bend[i];
   }
   
-  const v4sf* srate_freq_max = (v4sf*)srate_prop_buf_get(self, PROP_FREQ_MAX);
-  const v4sf* srate_ampfreq_scale_idx_mul = (v4sf*)srate_prop_buf_get(self, PROP_AMPFREQ_SCALE_IDX_MUL);
-  const v4sf* srate_amp_boost_center = (v4sf*)srate_prop_buf_get(self, PROP_AMP_BOOST_CENTER);
-  const v4sf* srate_amp_boost_sharpness = (v4sf*)srate_prop_buf_get(self, PROP_AMP_BOOST_SHARPNESS);
-  const v4sf* srate_amp_boost_exp = (v4sf*)srate_prop_buf_get(self, PROP_AMP_BOOST_EXP);
-  const v4sf* srate_amp_boost_db = (v4sf*)srate_prop_buf_get(self, PROP_AMP_BOOST_DB);
-  const v4sf* srate_amp_pow_base = (v4sf*)srate_prop_buf_get(self, PROP_AMP_POW_BASE);
-  const v4sf* srate_amp_exp_idx_mul = (v4sf*)srate_prop_buf_get(self, PROP_AMP_EXP_IDX_MUL);
-  const v4sf* srate_ampfreq_scale_offset = (v4sf*)srate_prop_buf_get(self, PROP_AMPFREQ_SCALE_OFFSET);
-  const v4sf* srate_ampfreq_scale_exp = (v4sf*)srate_prop_buf_get(self, PROP_AMPFREQ_SCALE_EXP);
-  const v4sf* srate_ringmod_rate = (v4sf*)srate_prop_buf_get(self, PROP_RINGMOD_RATE);
-  const v4sf* srate_ringmod_depth = (v4sf*)srate_prop_buf_get(self, PROP_RINGMOD_DEPTH);
-  
-  for (int i = 0; i < nbuf4elements; ++i) {
-    const v4sf freq_note_bent = srate_bend[0];
+  const v4sf* const srate_freq_max = (v4sf*)srate_prop_buf_get(self, PROP_FREQ_MAX);
+  const v4sf* const srate_ampfreq_scale_idx_mul = (v4sf*)srate_prop_buf_get(self, PROP_AMPFREQ_SCALE_IDX_MUL);
+  const v4sf* const srate_amp_boost_center = (v4sf*)srate_prop_buf_get(self, PROP_AMP_BOOST_CENTER);
+  const v4sf* const srate_amp_boost_sharpness = (v4sf*)srate_prop_buf_get(self, PROP_AMP_BOOST_SHARPNESS);
+  const v4sf* const srate_amp_boost_exp = (v4sf*)srate_prop_buf_get(self, PROP_AMP_BOOST_EXP);
+  const v4sf* const srate_amp_boost_db = (v4sf*)srate_prop_buf_get(self, PROP_AMP_BOOST_DB);
+  const v4sf* const srate_amp_pow_base = (v4sf*)srate_prop_buf_get(self, PROP_AMP_POW_BASE);
+  const v4sf* const srate_amp_exp_idx_mul = (v4sf*)srate_prop_buf_get(self, PROP_AMP_EXP_IDX_MUL);
+  const v4sf* const srate_ampfreq_scale_offset = (v4sf*)srate_prop_buf_get(self, PROP_AMPFREQ_SCALE_OFFSET);
+  const v4sf* const srate_ampfreq_scale_exp = (v4sf*)srate_prop_buf_get(self, PROP_AMPFREQ_SCALE_EXP);
+  const v4sf* const srate_ringmod_rate = (v4sf*)srate_prop_buf_get(self, PROP_RINGMOD_RATE);
+  const v4sf* const srate_ringmod_depth = (v4sf*)srate_prop_buf_get(self, PROP_RINGMOD_DEPTH);
+
+  for (int j = self->sum_start_idx, idx_o = 0; idx_o < self->overtones; ++j, ++idx_o) {
+    g_assert(idx_o < MAX_OVERTONES);
+    StateOvertone* const overtone = &self->states_overtone[idx_o];
     
-    for (int j = self->sum_start_idx, idx_o = 0; idx_o < self->overtones; ++j, ++idx_o) {
-      g_assert(idx_o < MAX_OVERTONES);
-    
-      const v4sf hscale_freq = srate_ampfreq_scale_idx_mul[0] * (gfloat)j + srate_ampfreq_scale_offset[0];
+	v4sf f = overtone->accum_rads * V4SF_UNIT;
+	v4sf f_rm = overtone->accum_rm_rads * V4SF_UNIT;
+
+    for (int i = 0; i < nbuf4elements; ++i) {
+      const v4sf hscale_freq = srate_ampfreq_scale_idx_mul[i] * (gfloat)j + srate_ampfreq_scale_offset[i];
+	  
+      const v4sf freq_note_bent = srate_bend[i];
       const v4sf freq_overtone = freq_note_bent * hscale_freq;
     
+      // Limit the number of overtones to reduce aliasing.
+	  const v4si mute_sample = (freq_overtone <= 0) | (freq_overtone > srate_freq_max[i]);
+      if (v4si_eq(mute_sample, V4SI_TRUE))
+		continue; // broad check to save CPU
+	  
+	  const v4sf amp_mute_sample = bitselect4f(mute_sample, V4SF_ZERO, V4SF_UNIT);
+	  
+      v4sf amp_boost = srate_amp_boost_db[i];
+	  
+	  if (!v4sf_eq(amp_boost, V4SF_ZERO)) {
+        amp_boost *= pow4f_method(window_sharp_cosine4(
+									freq_overtone,
+									srate_amp_boost_center[i],
+									22050.0,
+									srate_amp_boost_sharpness[i]),
+								  srate_amp_boost_exp[i]);
+	  }
+
+	  const v4sf hscale_amp =
+		pow4f_method(srate_amp_pow_base[i], (gfloat)j * srate_amp_exp_idx_mul[i])
+		* pow4f_method(hscale_freq, srate_ampfreq_scale_exp[i])
+		;
+
       const v4sf time_to_rads = F2PI * freq_overtone;
       const v4sf inc = time_to_rads * secs_per_sample;
-      const v4sf inc_rm = inc * srate_ringmod_depth[0];
+      const v4sf inc_rm = inc * srate_ringmod_depth[i];
 
-      StateOvertone* const overtone = &self->states_overtone[idx_o];
-      v4sf f;
-      f[0] = overtone->accum_rads;
-      f[1] = f[0] + inc[0];
-      f[2] = f[1] + inc[1];
-      f[3] = f[2] + inc[2];
-        
-      v4sf f_rm;
-      f_rm[0] = overtone->accum_rm_rads;
-      f_rm[1] = f_rm[0] + inc_rm[0];
-      f_rm[2] = f_rm[1] + inc_rm[1];
-      f_rm[3] = f_rm[2] + inc_rm[2];
+	  f[0] = f[3] + inc[0];
+	  f[1] = f[0] + inc[1];
+	  f[2] = f[1] + inc[2];
+	  f[3] = f[2] + inc[3];
+	  f_rm[0] = f_rm[3] + inc_rm[0];
+	  f_rm[1] = f_rm[0] + inc_rm[1];
+	  f_rm[2] = f_rm[1] + inc_rm[2];
+	  f_rm[3] = f_rm[2] + inc_rm[3];
 
-      // Limit the number of overtones to reduce aliasing.
-	  const v4si mute_sample = (freq_overtone <= 0) | (freq_overtone > srate_freq_max[0]);
-      if (!v4si_eq(mute_sample, V4SI_TRUE)) {
-        // broad check to save CPU
-	  
-        const v4sf amp_mute_sample = bitselect4f(mute_sample, V4SF_ZERO, V4SF_UNIT);
-	  
-        v4sf amp_boost = srate_amp_boost_db[0];
-	  
-        if (!v4sf_eq(amp_boost, V4SF_ZERO)) {
-          amp_boost *= pow4f_method(window_sharp_cosine4(
-                                      freq_overtone,
-                                      srate_amp_boost_center[0],
-                                      22050.0,
-                                      srate_amp_boost_sharpness[0]),
-                                    srate_amp_boost_exp[0]);
-        }
-
-        const v4sf hscale_amp =
-          pow4f_method(srate_amp_pow_base[0], (gfloat)j * srate_amp_exp_idx_mul[0])
-          * pow4f_method(hscale_freq, srate_ampfreq_scale_exp[0])
-          ;
-
-        v4sf sample = (amp_boost + hscale_amp) * amp_mute_sample * sin4f(f);
-        if (!v4sf_eq(srate_ringmod_rate[0], V4SF_ZERO))
-          sample *= powsin4f(f_rm, srate_ringmod_rate[0]);
-        buf4[i] += sample;
-      }
-      
-      overtone->accum_rads = f[3] + inc[3];
-      overtone->accum_rm_rads = f_rm[3] + inc_rm[3];
+      v4sf sample = (amp_boost + hscale_amp) * amp_mute_sample * sin4f(f);
+	  if (!v4sf_eq(srate_ringmod_rate[i], V4SF_ZERO))
+		sample *= powsin4f(f_rm, srate_ringmod_rate[i]);
+	  buf4[i] += sample;
     }
-    
-    srate_bend += nbuf4elements;
-    srate_freq_max += nbuf4elements;
-    srate_ampfreq_scale_idx_mul += nbuf4elements;
-    srate_amp_boost_center += nbuf4elements;
-    srate_amp_boost_sharpness += nbuf4elements;
-    srate_amp_boost_exp += nbuf4elements;
-    srate_amp_boost_db += nbuf4elements;
-    srate_amp_pow_base += nbuf4elements;
-    srate_amp_exp_idx_mul += nbuf4elements;
-    srate_ampfreq_scale_offset += nbuf4elements;
-    srate_ampfreq_scale_exp += nbuf4elements;
-    srate_ringmod_rate += nbuf4elements;
-    srate_ringmod_depth += nbuf4elements;
-  }
 
-  for (int idx_o = 0; idx_o < self->overtones; ++idx_o) {
-    StateOvertone* const overtone = &self->states_overtone[idx_o];
-    g_assert(idx_o < MAX_OVERTONES);
-    overtone->accum_rads = fmodf(overtone->accum_rads, F2PI);
-    overtone->accum_rm_rads = fmodf(overtone->accum_rm_rads, F2PI);
+    overtone->accum_rads = fmodf(f[3], F2PI);
+    overtone->accum_rm_rads = fmodf(f_rm[3], F2PI);
   }
 
   const v4sf* const vol_srate = (v4sf*)srate_prop_buf_get(self, PROP_VOL);
   
   const gfloat fscale = 32768.0f;
   for (int i = 0; i < nbuf4elements; ++i)
-    ((v4ss*)info->data)[i] = __builtin_convertvector(buf4[i] * fscale * vol_srate[i*nbuf4elements], v4ss);
+    ((v4ss*)info->data)[i] = __builtin_convertvector(buf4[i] * fscale * vol_srate[i], v4ss);
   
   struct timespec clock_end;
   clock_gettime(CLOCK_MONOTONIC_RAW, &clock_end);

@@ -148,16 +148,14 @@ void gstbt_adsr_get_value_array_f(GstBtPropSrateControlSource* super, GstClockTi
 }
 
 gboolean gstbt_adsr_mod_value_array_f(GstBtPropSrateControlSource* super, GstClockTime timestamp, GstClockTime interval,
-									  guint n_values, v4sf* values) {
+									  guint n_values, gfloat* values) {
   GstBtAdsr* self = (GstBtAdsr*)super;
   guint accum = 0;
   for (guint i = 0; i < n_values; ++i) {
-    for (guint j = 0; j < 4; ++j) {
-      const gfloat val = get_value_inline(self, timestamp);
-      values[i*n_values/4][j] *= val;
-      accum = accum != 0 || val != 0;
-      timestamp += interval;
-    }
+	const gfloat val = get_value_inline(self, timestamp);
+	values[i] *= val;
+	accum = accum != 0 || val != 0;
+	timestamp += interval;
   }
   return accum != 0;
 }

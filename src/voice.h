@@ -18,7 +18,6 @@
 
 #pragma once
 
-#include "src/math.h"
 #include <glib-object.h>
 #include <gst/gst.h>
 
@@ -35,7 +34,7 @@ void gstbt_additivev_get_value_array_f_for_prop(
   GstClockTime timestamp,
   GstClockTime interval,
   guint n_values,
-  v4sf* values,
+  gfloat* values,
   gboolean props_active[],
   gboolean props_controlled[]);
 

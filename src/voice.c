@@ -102,7 +102,7 @@ void gstbt_additivev_get_value_array_f_for_prop(
   GstClockTime timestamp,
   GstClockTime interval,
   guint n_values,
-  v4sf* values,
+  gfloat* values,
   gboolean* props_active,
   gboolean* props_controlled) {
 
@@ -110,10 +110,10 @@ void gstbt_additivev_get_value_array_f_for_prop(
   if (idx < self->n_parent_props) {
 	gboolean any_nonzero = gstbt_prop_srate_cs_mod_value_array_f(
 	  (GstBtPropSrateControlSource*)self->adsr, timestamp, interval, n_values,
-	  values + idx);
+	  values + n_values * idx);
 	
-	any_nonzero = gstbt_lfo_float_mod_value_array_accum(self->lfo, interval, n_values, values + idx)
-    || any_nonzero;
+	any_nonzero = gstbt_lfo_float_mod_value_array_accum(self->lfo, interval, n_values, values + n_values * idx)
+	  || any_nonzero;
 
 	props_active[idx] = props_active[idx] || any_nonzero;
 	props_controlled[idx] = TRUE;
