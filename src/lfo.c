@@ -111,8 +111,6 @@ static void srate_props_fill(GstBtLfoFloat* const self, const GstClockTime times
     v4sf* const sratebuf = &self->buf_srate_props[self->buf_srate_nsamples/4*i];
     for (guint j = 0; j < n_values/4; ++j) {
       sratebuf[j] = value;
-      if (i == GSTBT_LFO_FLOAT_PROP_OFFSET)
-        sratebuf[j] = V4SF_UNIT;
     }
   }
 
