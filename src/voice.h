@@ -22,20 +22,34 @@
 #include <gst/gst.h>
 
 G_BEGIN_DECLS
-G_DECLARE_FINAL_TYPE(GstBtAdditiveV, gstbt_additivev, GSTBT, ADDITIVEV, GstObject)
+G_DECLARE_FINAL_TYPE(GstBtAdditiveV, gstbt_additivev, GSTBT, ADDITIVEV, GstObject);
 
-GstBtAdditiveV* gstbt_additivev_new(GParamSpec** parent_props, guint n_parent_props);
+GstBtAdditiveV* gstbt_additivev_new(GParamSpec** parent_props, guint n_parent_props, guint srate_buf_size,
+                                    guint idx_voice);
+
 void gstbt_additivev_process(GstBtAdditiveV* self, GstBuffer* gstbuf);
 void gstbt_additivev_note_off(GstBtAdditiveV* self, GstClockTime time);
 void gstbt_additivev_note_on(GstBtAdditiveV* self, GstClockTime time);
 
-void gstbt_additivev_get_value_array_f_for_prop(
-  const GstBtAdditiveV* self,
+void gstbt_additivev_mod_value_array_f_for_prop(
+  GstBtAdditiveV* self,
   GstClockTime timestamp,
   GstClockTime interval,
   guint n_values,
   gfloat* values,
   gboolean props_active[],
-  gboolean props_controlled[]);
+  gboolean props_controlled[],
+  GstBtAdditiveV** voices);
+
+void gstbt_additivev_mod_value_array_f_for_prop_idx(
+  GstBtAdditiveV* self,
+  GstClockTime timestamp,
+  GstClockTime interval,
+  guint n_values,
+  gfloat* values,
+  gboolean props_active[],
+  gboolean props_controlled[],
+  GstBtAdditiveV** voices,
+  guint idx);
 
 G_END_DECLS

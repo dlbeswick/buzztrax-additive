@@ -282,11 +282,7 @@ void math_test(void) {
   g_assert(v4sf_eq(copysign4f(V4SF_UNIT, -V4SF_UNIT), -V4SF_UNIT));
   g_assert(v4sf_eq(copysign4f(-V4SF_UNIT, -V4SF_UNIT), -V4SF_UNIT));
   
-  v4sf inputxa = (v4sf)(0x33000000 * V4SI_UNIT);
-  v4sf inputxb = (v4sf)(0x40b36000 * V4SI_UNIT);
-  printf("%f\n",pow4f(inputxa, inputxb)[0]);
-  
-  g_assert(v4sf_eq(denorm_strip4f(V4SF_MIN_NORM_POS - V4SF_MIN_NORM_POS*0.01f), V4SF_ZERO));
+  g_assert(v4sf_eq(denorm_strip4f((v4sf)(0x00000001 * V4SI_UNIT)), V4SF_ZERO));
   
   {
     v4sf input = {-1.0f, 0.0f, 3.0f, 2.0f};

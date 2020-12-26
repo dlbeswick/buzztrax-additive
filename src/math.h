@@ -31,24 +31,24 @@ typedef guint v4ui __attribute__ ((vector_size (16)));
 typedef gint16 v4ss __attribute__ ((vector_size (8)));
 
 #define FPI ((gfloat)G_PI)
-const float F2PI;
+extern const float F2PI;
 
-const v4ui V4UI_UNIT;
-const v4ui V4UI_ZERO;
-const v4ui V4UI_TRUE;
+extern const v4ui V4UI_UNIT;
+extern const v4ui V4UI_ZERO;
+extern const v4ui V4UI_TRUE;
 #define V4SI_UNIT ((v4si)V4UI_UNIT)
 #define V4SI_ZERO ((v4si)V4UI_ZERO)
 #define V4SI_TRUE ((v4si)V4UI_TRUE)
 
-const v4sf V4SF_UNIT;
-const v4sf V4SF_ZERO;
-const v4sf V4SF_NAN;
-const v4ui V4SF_SIGN_MASK;
-const v4sf V4SF_MIN_NORM_POS;
+extern const v4sf V4SF_UNIT;
+extern const v4sf V4SF_ZERO;
+extern const v4sf V4SF_NAN;
+extern const v4ui V4SF_SIGN_MASK;
+extern const v4sf V4SF_MIN_NORM_POS;
 
-const v4ui V4UI_FLOAT_0P5;
-const v4ui V4UI_FLOAT_EXPONENT;
-const v4ui V4UI_FLOAT_INV_EXPONENT;
+extern const v4ui V4UI_FLOAT_0P5;
+extern const v4ui V4UI_FLOAT_EXPONENT;
+extern const v4ui V4UI_FLOAT_INV_EXPONENT;
 
 // libmvec
 // https://stackoverflow.com/questions/40475140/mathematical-functions-for-simd-registers
@@ -259,13 +259,13 @@ v4sf exp4f(v4sf x);
 // No mathematical basis to this; it just helps simplify the use of real parameters as exponents.
 v4sf pow4f(v4sf base, v4sf exponent);
 
-inline v4sf sin4f_method(const v4sf x) {
+static inline v4sf sin4f_method(const v4sf x) {
   return sin4f(x);
   //return _ZGVbN4v_sinf(x);
 }
 
 // Sine with range  0 -> 1
-inline v4sf sin014f(const v4sf x) {
+static inline v4sf sin014f(const v4sf x) {
   return (1.0f + sin4f_method(x)) * 0.5f;
 }
 

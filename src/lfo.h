@@ -18,23 +18,24 @@
 
 #pragma once
 
+#include "src/voice.h"
 #include "src/propsratecontrolsource.h"
 
 /*
-  An LFO source that uses floating-point values.
+  An LFO source that produces floating-point values.
 
-  It can be operated via two interfaces -- either as a control source and a function based on time, or with an
-  accumulator. The accumulator mode will produce a different result to the function mode when parameters are changed
+  It operates using an accumulator mode will produce a different result to the function mode when parameters are changed
   during its operation as the output will basically be the integration of all the changes over time, rather than the
   result given the current parameters. This can be useful when modulating the LFO's own parameters, but it's not
   possible to get the output as a given time as it is with the control source approach.
 */
-G_DECLARE_FINAL_TYPE(GstBtLfoFloat, gstbt_lfo_float, GSTBT, LFO_FLOAT, GstBtPropSrateControlSource);
+G_DECLARE_FINAL_TYPE(GstBtLfoFloat, gstbt_lfo_float, GSTBT, LFO_FLOAT, GObject);
 
-GstBtLfoFloat* gstbt_lfo_float_new(GObject* owner);
+GstBtLfoFloat* gstbt_lfo_float_new(GObject* owner, guint buf_srate_size, guint idx_voice);
 
 void gstbt_lfo_float_props_add(GObjectClass* const klass, guint* idx);
 gboolean gstbt_lfo_float_property_set(GObject* obj, guint prop_id, const GValue* value, GParamSpec* pspec);
 gboolean gstbt_lfo_float_property_get(GObject* obj, guint prop_id, GValue* value, GParamSpec* pspec);
 
-gboolean gstbt_lfo_float_mod_value_array_accum(GstBtLfoFloat* self, GstClockTime interval, guint n_values, gfloat* values);
+gboolean gstbt_lfo_float_mod_value_array_accum(GstBtLfoFloat* self, GstClockTime timestamp, GstClockTime interval,
+                                               gfloat* values, guint n_values, GstBtAdditiveV** voices);

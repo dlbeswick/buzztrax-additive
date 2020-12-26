@@ -138,23 +138,13 @@ void gstbt_adsr_get_value_f(GstBtPropSrateControlSource* super, GstClockTime tim
   *value = get_value_inline(self, timestamp);
 }
 
-void gstbt_adsr_get_value_array_f(GstBtPropSrateControlSource* super, GstClockTime timestamp, GstClockTime interval,
-								  guint n_values, gfloat* values) {
-  GstBtAdsr* self = (GstBtAdsr*)super;
-  for (guint i = 0; i < n_values; ++i) {
-	values[i] = get_value_inline(self, timestamp);
-	timestamp += interval;
-  }
-}
-
-gboolean gstbt_adsr_mod_value_array_f(GstBtPropSrateControlSource* super, GstClockTime timestamp, GstClockTime interval,
-									  guint n_values, gfloat* values) {
+gboolean gstbt_adsr_get_value_array_f(GstBtPropSrateControlSource* super, GstClockTime timestamp, GstClockTime interval,
+                                      guint n_values, gfloat* values) {
   GstBtAdsr* self = (GstBtAdsr*)super;
   guint accum = 0;
   for (guint i = 0; i < n_values; ++i) {
-	const gfloat val = get_value_inline(self, timestamp);
-	values[i] *= val;
-	accum = accum != 0 || val != 0;
+	values[i] = get_value_inline(self, timestamp);
+	accum = accum != 0 || values[i] != 0;
 	timestamp += interval;
   }
   return accum != 0;
@@ -179,7 +169,6 @@ void gstbt_adsr_class_init(GstBtAdsrClass* const klass) {
   GstBtPropSrateControlSourceClass* const klass_cs = (GstBtPropSrateControlSourceClass*)klass;
   klass_cs->get_value_f = gstbt_adsr_get_value_f;
   klass_cs->get_value_array_f = gstbt_adsr_get_value_array_f;
-  klass_cs->mod_value_array_f = gstbt_adsr_mod_value_array_f;
 }
 
 void gstbt_adsr_props_add(GObjectClass* const klass, const char* postfix, guint* idx) {

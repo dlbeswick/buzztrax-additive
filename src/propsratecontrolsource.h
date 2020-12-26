@@ -38,16 +38,10 @@ struct _GstBtPropSrateControlSourceClass {
   GstControlSourceClass parent;
 
   void (*get_value_f)(GstBtPropSrateControlSource* self, GstClockTime timestamp, gfloat* value);
-  void (*get_value_array_f)(GstBtPropSrateControlSource* self, GstClockTime timestamp, GstClockTime interval,
-							guint n_values, gfloat* values);
-
-  // Return true if any of the input values were modulated to non-zero values.
-  gboolean (*mod_value_array_f)(GstBtPropSrateControlSource* self, GstClockTime timestamp, GstClockTime interval,
-								guint n_values, gfloat* values);
+  gboolean (*get_value_array_f)(GstBtPropSrateControlSource* self, GstClockTime timestamp, GstClockTime interval,
+                                guint n_values, gfloat* values);
 };
 
 void gstbt_prop_srate_cs_get_value_f(GstBtPropSrateControlSource* self, GstClockTime timestamp, gfloat* value);
-void gstbt_prop_srate_cs_get_value_array_f(GstBtPropSrateControlSource* self, GstClockTime timestamp,
-										   GstClockTime interval, guint n_values, gfloat* values);
-gboolean gstbt_prop_srate_cs_mod_value_array_f(GstBtPropSrateControlSource* self, GstClockTime timestamp,
-											   GstClockTime interval, guint n_values, gfloat* values);
+gboolean gstbt_prop_srate_cs_get_value_array_f(GstBtPropSrateControlSource* self, GstClockTime timestamp,
+                                               GstClockTime interval, guint n_values, gfloat* values);

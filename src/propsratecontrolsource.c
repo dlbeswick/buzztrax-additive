@@ -26,18 +26,11 @@ void gstbt_prop_srate_cs_get_value_f(GstBtPropSrateControlSource* self, GstClock
   klass->get_value_f(self, timestamp, value);
 }
 
-void gstbt_prop_srate_cs_get_value_array_f(GstBtPropSrateControlSource* self, GstClockTime timestamp,
-										   GstClockTime interval, guint n_values, gfloat* values) {
+gboolean gstbt_prop_srate_cs_get_value_array_f(GstBtPropSrateControlSource* self, GstClockTime timestamp,
+                                               GstClockTime interval, guint n_values, gfloat* values) {
   GstBtPropSrateControlSourceClass* klass = GSTBT_PROP_SRATE_CONTROL_SOURCE_GET_CLASS(self);
   g_assert(klass->get_value_array_f != NULL);
-  klass->get_value_array_f(self, timestamp, interval, n_values, values);
-}
-
-gboolean gstbt_prop_srate_cs_mod_value_array_f(GstBtPropSrateControlSource* self, GstClockTime timestamp,
-											   GstClockTime interval, guint n_values, gfloat* values) {
-  GstBtPropSrateControlSourceClass* klass = GSTBT_PROP_SRATE_CONTROL_SOURCE_GET_CLASS(self);
-  g_assert(klass->mod_value_array_f != NULL);
-  return klass->mod_value_array_f(self, timestamp, interval, n_values, values);
+  return klass->get_value_array_f(self, timestamp, interval, n_values, values);
 }
 
 void gstbt_prop_srate_cs_class_init(GstBtPropSrateControlSourceClass* const klass) {

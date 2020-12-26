@@ -17,6 +17,7 @@
 */
 
 #include "config.h"
+#include "src/additive.h"
 #include "src/genums.h"
 
 #include "src/adsr.h"
@@ -47,7 +48,6 @@ GST_DEBUG_CATEGORY(GST_CAT_DEFAULT);
 
 static gfloat lut_sin[1024];
 
-enum { MAX_VOICES = 24 };
 enum { MAX_OVERTONES = 600 };
 
 typedef struct {
@@ -89,15 +89,18 @@ typedef struct
   gfloat amp_boost_db_calc;
   gfloat accum_rads;
   GstBtToneConversion* tones;
-  gfloat* buf;
-  gfloat* buf_srate_props;
   StateOvertone* states_overtone;
   GstBtAdditiveV* voices[MAX_VOICES];
 
-  gint calls;
-  long time_accum;
+  guint buf_samples;
+  guint nsamples_available;
+  gfloat* buf;
+  gfloat* buf_srate_props;
   gboolean props_srate_nonzero[N_PROPERTIES_SRATE];
   gboolean props_srate_controlled[N_PROPERTIES_SRATE];
+
+  gint calls;
+  long time_accum;
 } GstBtAdditive;
 
 enum {
@@ -332,7 +335,7 @@ static inline gfloat sin01(const gfloat x) {
 }
 
 static gfloat* srate_prop_buf_get(const GstBtAdditive* const self, AdditivePropsSrate prop) {
-  return self->buf_srate_props + self->parent.generate_samples_per_buffer * ((guint)prop-1);
+  return self->buf_srate_props + self->buf_samples * ((guint)prop-1);
 }
 
 static gboolean srate_prop_is_controlled(const GstBtAdditive* const self, AdditivePropsSrate prop) {
@@ -343,9 +346,9 @@ static gboolean srate_prop_is_nonzero(const GstBtAdditive* const self, AdditiveP
   return self->props_srate_nonzero[(guint)prop-1];
 }
 
-static void srate_props_fill(GstBtAdditive* const self, const GstClockTime timestamp, const GstClockTime interval) {
-  const guint nbufelements = self->parent.generate_samples_per_buffer;
-  for (guint i = 0; i < N_PROPERTIES_SRATE; ++i) {
+static void srate_props_fill(GstBtAdditive* const self, const GstClockTime timestamp, const GstClockTime interval,
+                             const guint nbufelements) {
+  for (guint i = 0; i < N_PROPERTIES_SRATE-1; ++i) {
     GValue src = G_VALUE_INIT;
     g_value_init(&src, G_TYPE_FLOAT);
     g_object_get_property((GObject*)self, properties[i+1]->name, &src);
@@ -353,8 +356,8 @@ static void srate_props_fill(GstBtAdditive* const self, const GstClockTime times
     gfloat value = g_value_get_float(&src);
     g_value_unset(&src);
 
-    gfloat* const sratebuf = &self->buf_srate_props[i * nbufelements];
-    for (guint j = 0; j < self->parent.generate_samples_per_buffer; ++j)
+    gfloat* const sratebuf = &self->buf_srate_props[i * self->buf_samples];
+    for (guint j = 0; j < nbufelements; ++j)
       sratebuf[j] = value;
   }
 
@@ -368,14 +371,15 @@ static void srate_props_fill(GstBtAdditive* const self, const GstClockTime times
   }
   
   for (guint i = 0; i < self->n_voices; ++i) {
-    gstbt_additivev_get_value_array_f_for_prop(
+    gstbt_additivev_mod_value_array_f_for_prop(
       self->voices[i],
       timestamp,
       interval,
       nbufelements,
       self->buf_srate_props,
       self->props_srate_nonzero,
-      self->props_srate_controlled
+      self->props_srate_controlled,
+      self->voices
       );
   }
 }
@@ -388,13 +392,10 @@ static gboolean is_machine_silent(GstBtAdditive* self) {
   }
 }
 
-static gboolean _process(GstBtAudioSynth* synth, GstBuffer* gstbuf, GstMapInfo* info) {
-  struct timespec clock_start;
-  clock_gettime(CLOCK_MONOTONIC_RAW, &clock_start);
-
-  GstBtAdditive* const self = GSTBT_ADDITIVE(synth);
-
-  const gfloat rate = synth->info.rate;
+static void fill_buffer_internal(GstBtAdditive* const self, GstBuffer* gstbuf, int nbufelements) {
+  self->nsamples_available = nbufelements;
+  
+  const gfloat rate = self->parent.info.rate;
   const gfloat secs_per_sample = 1.0f / rate;
 
   for (int i = 0; i < self->n_voices; ++i) {
@@ -403,17 +404,15 @@ static gboolean _process(GstBtAudioSynth* synth, GstBuffer* gstbuf, GstMapInfo* 
 
   const gfloat freq_note = (gfloat)gstbt_tone_conversion_translate_from_number(self->tones, self->note);
 
-  const int nbufelements = synth->generate_samples_per_buffer;
   const int nbuf4elements = nbufelements/4;
 
-  srate_props_fill(self, synth->running_time, GST_SECOND / rate);
+  srate_props_fill(self, self->parent.running_time, GST_SECOND / rate, nbufelements);
 
   v4sf* const buf4 = (v4sf*)self->buf;
   memset(buf4, 0, nbuf4elements*sizeof(typeof(*buf4)));
 
   if (is_machine_silent(self)) {
-    // Note: if FALSE is returned here then downstream effects stop making noise.
-    return TRUE;
+    return;
   }
 
   v4sf* const srate_bend = (v4sf*)srate_prop_buf_get(self, PROP_BEND);
@@ -433,7 +432,7 @@ static gboolean _process(GstBtAudioSynth* synth, GstBuffer* gstbuf, GstMapInfo* 
   const v4sf* const srate_ampfreq_scale_exp = (v4sf*)srate_prop_buf_get(self, PROP_AMPFREQ_SCALE_EXP);
   const v4sf* const srate_ringmod_rate = (v4sf*)srate_prop_buf_get(self, PROP_RINGMOD_RATE);
   const v4sf* const srate_ringmod_depth = (v4sf*)srate_prop_buf_get(self, PROP_RINGMOD_DEPTH);
-
+  
   for (int j = self->sum_start_idx, idx_o = 0; idx_o < self->overtones; ++j, ++idx_o) {
     g_assert(idx_o < MAX_OVERTONES);
     StateOvertone* const overtone = &self->states_overtone[idx_o];
@@ -492,22 +491,48 @@ static gboolean _process(GstBtAudioSynth* synth, GstBuffer* gstbuf, GstMapInfo* 
     overtone->accum_rads = fmodf(f[3], F2PI);
     overtone->accum_rm_rads = fmodf(f_rm[3], F2PI);
   }
-
+  
   const v4sf* const vol_srate = (v4sf*)srate_prop_buf_get(self, PROP_VOL);
   
-  const gfloat fscale = 32768.0f;
   for (int i = 0; i < nbuf4elements; ++i)
-    ((v4ss*)info->data)[i] = __builtin_convertvector(buf4[i] * fscale * vol_srate[i], v4ss);
+    buf4[i] = 32767.5f * buf4[i] * vol_srate[i] - 0.5f;
+}
+
+static gboolean process(GstBtAudioSynth* synth, GstBuffer* gstbuf, GstMapInfo* info) {
+  struct timespec clock_start;
+  clock_gettime(CLOCK_MONOTONIC_RAW, &clock_start);
+
+  GstBtAdditive* const self = GSTBT_ADDITIVE(synth);
+  
+  gint16* outbuf = (gint16*)(info->data);
+  guint to_copy = synth->generate_samples_per_buffer;
+  const gfloat* internal_buf = self->buf + self->buf_samples - self->nsamples_available;
+
+  g_assert(to_copy <= self->buf_samples);
+  
+  for (; self->nsamples_available > 0 && to_copy > 0; --self->nsamples_available, --to_copy)
+    *(outbuf++) = (gint16)*(internal_buf++);
+
+  if (self->nsamples_available == 0 && to_copy != 0) {
+    fill_buffer_internal(self, gstbuf, synth->generate_samples_per_buffer/4*4);
+    internal_buf = self->buf;
+  }
+  
+  g_assert(to_copy <= self->nsamples_available);
+  for (; to_copy > 0; --self->nsamples_available, --to_copy)
+    *(outbuf++) = (gint16)*(internal_buf++);
   
   struct timespec clock_end;
   clock_gettime(CLOCK_MONOTONIC_RAW, &clock_end);
   self->time_accum += (clock_end.tv_sec - clock_start.tv_sec) * 1e9L + (clock_end.tv_nsec - clock_start.tv_nsec);
-  self->calls += nbuf4elements * 4;
-  if (self->calls > rate) {
+  self->calls += self->parent.generate_samples_per_buffer;
+  if (self->calls > self->parent.info.rate) {
     GST_INFO("Avg perf: %f samples/sec\n", self->calls / (self->time_accum / 1e9f));
     self->time_accum = 0;
     self->calls = 0;
   }
+  
+  // Note: if FALSE is ever returned from this function then downstream effects stop making noise.
   return TRUE;
 }
 
@@ -522,15 +547,17 @@ static void _negotiate (GstBtAudioSynth* base, GstCaps* caps) {
 }
 
 static void gstbt_additive_init(GstBtAdditive* const self) {
+  self->buf_samples = (guint)self->parent.samples_per_buffer/4*4;
+  
   self->tones = gstbt_tone_conversion_new(GSTBT_TONE_CONVERSION_EQUAL_TEMPERAMENT);
-  self->buf = g_malloc(sizeof(typeof(*(self->buf))) * self->parent.generate_samples_per_buffer);
+  self->buf = g_malloc(sizeof(typeof(*(self->buf))) * self->buf_samples);
   self->buf_srate_props =
-    g_malloc(sizeof(typeof(*(self->buf_srate_props))) * self->parent.generate_samples_per_buffer * N_PROPERTIES_SRATE);
+    g_malloc(sizeof(typeof(*(self->buf_srate_props))) * self->buf_samples * (N_PROPERTIES_SRATE-1));
 
   self->states_overtone = g_new0(StateOvertone, MAX_OVERTONES);
 
   for (int i = 0; i < MAX_VOICES; i++) {
-    self->voices[i] = gstbt_additivev_new(&properties[1], N_PROPERTIES_SRATE);
+    self->voices[i] = gstbt_additivev_new(&properties[1], N_PROPERTIES_SRATE, self->buf_samples, i);
 
     char name[7];
     g_snprintf(name, sizeof(name), "voice%1d", i);
@@ -570,7 +597,7 @@ static void gstbt_additive_class_init(GstBtAdditiveClass * const klass) {
     PACKAGE_BUGREPORT);
 
   GstBtAudioSynthClass *audio_synth_class = (GstBtAudioSynthClass *) klass;
-  audio_synth_class->process = _process;
+  audio_synth_class->process = process;
   /*audio_synth_class->reset = gstbt_sim_syn_reset;*/
   audio_synth_class->negotiate = _negotiate;
 

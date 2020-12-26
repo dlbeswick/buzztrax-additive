@@ -20,6 +20,7 @@
 #include "src/adsr.h"
 #include "src/lfo.h"
 #include "src/genums.h"
+#include "src/math.h"
 #include "src/generated/generated-genums.h"
 
 #include "libbuzztrax-gst/propertymeta.h"
@@ -37,6 +38,9 @@ struct _GstBtAdditiveV
   GstBtLfoFloat* lfo;
   GParamSpec** parent_props;
   guint n_parent_props;
+  guint srate_buf_size;
+  v4sf* srate_buf;
+  GstClockTime timestamp_last;
 };
 
 enum
@@ -97,38 +101,68 @@ void gstbt_additivev_note_on(GstBtAdditiveV* self, GstClockTime time) {
   gstbt_adsr_trigger(self->adsr, time);
 }
 
-void gstbt_additivev_get_value_array_f_for_prop(
-  const GstBtAdditiveV* self,
+void gstbt_additivev_mod_value_array_f_for_prop(
+  GstBtAdditiveV* self,
   GstClockTime timestamp,
   GstClockTime interval,
   guint n_values,
   gfloat* values,
   gboolean* props_active,
-  gboolean* props_controlled) {
+  gboolean* props_controlled,
+  GstBtAdditiveV** voices) {
 
   guint idx = self->idx_target_prop - 1;
   if (idx < self->n_parent_props) {
-	gboolean any_nonzero = gstbt_prop_srate_cs_mod_value_array_f(
-	  (GstBtPropSrateControlSource*)self->adsr, timestamp, interval, n_values,
-	  values + n_values * idx);
+    gstbt_additivev_mod_value_array_f_for_prop_idx(self, timestamp, interval, n_values, values, props_active,
+                                                   props_controlled, voices, idx);
+  }
+}
+
+void gstbt_additivev_mod_value_array_f_for_prop_idx(
+  GstBtAdditiveV* self,
+  GstClockTime timestamp,
+  GstClockTime interval,
+  guint n_values,
+  gfloat* values,
+  gboolean* props_active,
+  gboolean* props_controlled,
+  GstBtAdditiveV** voices,
+  guint idx) {
+
+  if (timestamp != self->timestamp_last) {
+    self->timestamp_last = timestamp;
+    
+    gboolean any_nonzero = gstbt_prop_srate_cs_get_value_array_f(
+      (GstBtPropSrateControlSource*)self->adsr, timestamp, interval, n_values, (gfloat*)self->srate_buf);
 	
-	any_nonzero = gstbt_lfo_float_mod_value_array_accum(self->lfo, interval, n_values, values + n_values * idx)
+    any_nonzero =
+      gstbt_lfo_float_mod_value_array_accum(self->lfo, timestamp, interval, (gfloat*)self->srate_buf, n_values, voices)
 	  || any_nonzero;
 
-	props_active[idx] = props_active[idx] || any_nonzero;
-	props_controlled[idx] = TRUE;
+    props_active[idx] = props_active[idx] || any_nonzero;
+    props_controlled[idx] = TRUE;
+  }
+
+  v4sf* outbuf = (v4sf*)values + self->srate_buf_size/4 * idx;
+  if (props_active[idx]) {
+    for (guint i = 0; i < self->srate_buf_size/4; ++i)
+      outbuf[i] *= self->srate_buf[i];
+  } else {
+    for (guint i = 0; i < self->srate_buf_size/4; ++i)
+      outbuf[i] = V4SF_ZERO;
   }
 }
 
 static void gstbt_additivev_init(GstBtAdditiveV* const self) {
   self->adsr = gstbt_adsr_new((GObject*)self, "");
-  self->lfo = gstbt_lfo_float_new((GObject*)self);
+  self->timestamp_last = -1;
 }
 
 static void dispose(GObject* const gobj) {
   GstBtAdditiveV* const self = (GstBtAdditiveV*)gobj;
   g_clear_object(&self->adsr);
   g_clear_object(&self->lfo);
+  g_clear_object(&self->srate_buf);
 }
 
 static void gstbt_additivev_class_init(GstBtAdditiveVClass* const klass) {
@@ -152,9 +186,13 @@ static void gstbt_additivev_class_init(GstBtAdditiveVClass* const klass) {
   gstbt_adsr_props_add(gobject_class, "", &idx);
 }
 
-GstBtAdditiveV* gstbt_additivev_new(GParamSpec** parent_props, guint n_parent_props) {
+GstBtAdditiveV* gstbt_additivev_new(GParamSpec** parent_props, guint n_parent_props, guint srate_buf_size,
+                                    guint idx_voice) {
   GstBtAdditiveV* result = (GstBtAdditiveV*)g_object_new(gstbt_additivev_get_type(), NULL);
   result->parent_props = parent_props;
   result->n_parent_props = n_parent_props;
+  result->lfo = gstbt_lfo_float_new((GObject*)result, srate_buf_size, idx_voice);
+  result->srate_buf_size = srate_buf_size;
+  result->srate_buf = g_malloc(sizeof(gfloat)*srate_buf_size);
   return result;
 }
