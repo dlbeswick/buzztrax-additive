@@ -31,7 +31,9 @@
 */
 G_DECLARE_FINAL_TYPE(GstBtLfoFloat, gstbt_lfo_float, GSTBT, LFO_FLOAT, GObject);
 
-GstBtLfoFloat* gstbt_lfo_float_new(GObject* owner, guint buf_srate_size, guint idx_voice);
+GstBtLfoFloat* gstbt_lfo_float_new(GObject* owner, guint idx_voice);
+
+void gstbt_lfo_float_on_buf_size_change(GstBtLfoFloat* self, guint n_samples);
 
 void gstbt_lfo_float_props_add(GObjectClass* const klass, guint* idx);
 gboolean gstbt_lfo_float_property_set(GObject* obj, guint prop_id, const GValue* value, GParamSpec* pspec);

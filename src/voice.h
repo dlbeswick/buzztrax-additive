@@ -24,12 +24,12 @@
 G_BEGIN_DECLS
 G_DECLARE_FINAL_TYPE(GstBtAdditiveV, gstbt_additivev, GSTBT, ADDITIVEV, GstObject);
 
-GstBtAdditiveV* gstbt_additivev_new(GParamSpec** parent_props, guint n_parent_props, guint srate_buf_size,
-                                    guint idx_voice);
+GstBtAdditiveV* gstbt_additivev_new(GParamSpec** parent_props, guint n_parent_props, guint idx_voice);
 
 void gstbt_additivev_process(GstBtAdditiveV* self, GstBuffer* gstbuf);
 void gstbt_additivev_note_off(GstBtAdditiveV* self, GstClockTime time);
 void gstbt_additivev_note_on(GstBtAdditiveV* self, GstClockTime time);
+void gstbt_additivev_on_buf_size_change(GstBtAdditiveV* self, guint n_samples);
 
 void gstbt_additivev_mod_value_array_f_for_prop(
   GstBtAdditiveV* self,

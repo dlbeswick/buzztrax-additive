@@ -55,7 +55,10 @@ v4sf sin4f(v4sf x) {
 
   const v4sf zz = z * z;
 
+  // == V4SF_COSCOF_P0*z**8 + V4SF_COSCOF_P1*z**6 + V4SF_COSCOF_P2*z**4 - 0.5*z**2 + 1.0
   const v4sf patha = 1.0f - 0.5f*zz + zz * zz * ((V4SF_COSCOF_P0 * zz + V4SF_COSCOF_P1) * zz + V4SF_COSCOF_P2);
+
+  // == V4SF_SINCOF_P0*z**7 + V4SF_SINCOF_P1*z**5  + V4SF_SINCOF_P2*z**3 + z
   const v4sf pathb = z + z * zz * ((V4SF_SINCOF_P0 * zz + V4SF_SINCOF_P1) * zz + V4SF_SINCOF_P2);
 	
   /*

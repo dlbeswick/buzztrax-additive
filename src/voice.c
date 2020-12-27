@@ -129,6 +129,10 @@ void gstbt_additivev_mod_value_array_f_for_prop_idx(
   GstBtAdditiveV** voices,
   guint idx) {
 
+  g_assert(self->srate_buf_size);
+  
+  // This function might be called multiple times in a frame as a voice could be targeting both a synth param and one
+  // or more voice params. If the same timestamp is used, then the same result is modulated with "values".
   if (timestamp != self->timestamp_last) {
     self->timestamp_last = timestamp;
     
@@ -151,6 +155,12 @@ void gstbt_additivev_mod_value_array_f_for_prop_idx(
     for (guint i = 0; i < self->srate_buf_size/4; ++i)
       outbuf[i] = V4SF_ZERO;
   }
+}
+
+void gstbt_additivev_on_buf_size_change(GstBtAdditiveV* const self, guint n_samples) {
+  self->srate_buf_size = n_samples;
+  self->srate_buf = g_realloc(self->srate_buf, sizeof(gfloat)*self->srate_buf_size);
+  gstbt_lfo_float_on_buf_size_change(self->lfo, n_samples);
 }
 
 static void gstbt_additivev_init(GstBtAdditiveV* const self) {
@@ -186,13 +196,10 @@ static void gstbt_additivev_class_init(GstBtAdditiveVClass* const klass) {
   gstbt_adsr_props_add(gobject_class, "", &idx);
 }
 
-GstBtAdditiveV* gstbt_additivev_new(GParamSpec** parent_props, guint n_parent_props, guint srate_buf_size,
-                                    guint idx_voice) {
+GstBtAdditiveV* gstbt_additivev_new(GParamSpec** parent_props, guint n_parent_props, guint idx_voice) {
   GstBtAdditiveV* result = (GstBtAdditiveV*)g_object_new(gstbt_additivev_get_type(), NULL);
   result->parent_props = parent_props;
   result->n_parent_props = n_parent_props;
-  result->lfo = gstbt_lfo_float_new((GObject*)result, srate_buf_size, idx_voice);
-  result->srate_buf_size = srate_buf_size;
-  result->srate_buf = g_malloc(sizeof(gfloat)*srate_buf_size);
+  result->lfo = gstbt_lfo_float_new((GObject*)result, idx_voice);
   return result;
 }

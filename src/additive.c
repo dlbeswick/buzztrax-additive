@@ -503,18 +503,34 @@ static gboolean process(GstBtAudioSynth* synth, GstBuffer* gstbuf, GstMapInfo* i
   clock_gettime(CLOCK_MONOTONIC_RAW, &clock_start);
 
   GstBtAdditive* const self = GSTBT_ADDITIVE(synth);
+
+  const guint required_bufsize = (self->parent.generate_samples_per_buffer+3)*4/16*4;
   
+  if (self->buf_samples < required_bufsize) {
+    GST_INFO("Reallocating internal buffers (%d samples, %d to %d 4-aligned)",
+             self->parent.generate_samples_per_buffer, self->buf_samples, required_bufsize);
+    
+    self->buf_samples = required_bufsize;
+    
+    self->buf = g_realloc(self->buf, sizeof(typeof(*(self->buf))) * self->buf_samples);
+    self->buf_srate_props =
+      g_realloc(self->buf_srate_props,
+                sizeof(typeof(*(self->buf_srate_props))) * self->buf_samples * (N_PROPERTIES_SRATE-1));
+    
+    for (int i = 0; i < MAX_VOICES; i++) {
+      gstbt_additivev_on_buf_size_change(self->voices[i], self->buf_samples);
+    }
+  }
+
   gint16* outbuf = (gint16*)(info->data);
   guint to_copy = synth->generate_samples_per_buffer;
   const gfloat* internal_buf = self->buf + self->buf_samples - self->nsamples_available;
 
-  g_assert(to_copy <= self->buf_samples);
-  
   for (; self->nsamples_available > 0 && to_copy > 0; --self->nsamples_available, --to_copy)
     *(outbuf++) = (gint16)*(internal_buf++);
 
   if (self->nsamples_available == 0 && to_copy != 0) {
-    fill_buffer_internal(self, gstbuf, synth->generate_samples_per_buffer/4*4);
+    fill_buffer_internal(self, gstbuf, self->buf_samples);
     internal_buf = self->buf;
   }
   
@@ -547,17 +563,11 @@ static void _negotiate (GstBtAudioSynth* base, GstCaps* caps) {
 }
 
 static void gstbt_additive_init(GstBtAdditive* const self) {
-  self->buf_samples = (guint)self->parent.samples_per_buffer/4*4;
-  
   self->tones = gstbt_tone_conversion_new(GSTBT_TONE_CONVERSION_EQUAL_TEMPERAMENT);
-  self->buf = g_malloc(sizeof(typeof(*(self->buf))) * self->buf_samples);
-  self->buf_srate_props =
-    g_malloc(sizeof(typeof(*(self->buf_srate_props))) * self->buf_samples * (N_PROPERTIES_SRATE-1));
-
   self->states_overtone = g_new0(StateOvertone, MAX_OVERTONES);
 
   for (int i = 0; i < MAX_VOICES; i++) {
-    self->voices[i] = gstbt_additivev_new(&properties[1], N_PROPERTIES_SRATE, self->buf_samples, i);
+    self->voices[i] = gstbt_additivev_new(&properties[1], N_PROPERTIES_SRATE, i);
 
     char name[7];
     g_snprintf(name, sizeof(name), "voice%1d", i);

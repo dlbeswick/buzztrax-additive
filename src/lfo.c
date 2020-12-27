@@ -92,6 +92,9 @@ static inline v4sf get_sample(const v4sf waveform, const v4sf accum_unbounded, c
 
 static void srate_props_fill(GstBtLfoFloat* const self, const GstClockTime timestamp, const GstClockTime interval,
                              guint n_values, GstBtAdditiveV** voices) {
+
+  g_assert(self->buf_srate_nsamples);
+  
   for (guint i = 0; i < GSTBT_LFO_FLOAT_PROP_N; ++i) {
     GValue src = G_VALUE_INIT;
 
@@ -218,6 +221,13 @@ static void dispose(GObject* obj) {
   g_clear_pointer(&self->buf_srate_props, g_free);
 }
 
+void gstbt_lfo_float_on_buf_size_change(GstBtLfoFloat* self, guint n_samples) {
+  g_assert(n_samples % 4 == 0);
+  self->buf_srate_nsamples = n_samples;
+  self->buf_srate_props = g_realloc(self->buf_srate_props,
+                                    sizeof(gfloat) * self->buf_srate_nsamples * GSTBT_LFO_FLOAT_PROP_N);
+}
+
 static void gstbt_lfo_float_init(GstBtLfoFloat* const self) {
 }
 
@@ -259,12 +269,8 @@ void gstbt_lfo_float_props_add(GObjectClass* const gobject_class, guint* idx) {
   }
 }
 
-GstBtLfoFloat* gstbt_lfo_float_new(GObject* const owner, const guint buf_srate_nsamples, const guint idx_voice) {
-  g_assert((buf_srate_nsamples % 4) == 0);
-           
+GstBtLfoFloat* gstbt_lfo_float_new(GObject* const owner, const guint idx_voice) {
   GstBtLfoFloat* result = g_object_new(gstbt_lfo_float_get_type(), NULL);
-  result->buf_srate_props = g_malloc(sizeof(gfloat) * buf_srate_nsamples * GSTBT_LFO_FLOAT_PROP_N);
-  result->buf_srate_nsamples = buf_srate_nsamples;
   result->owner = owner;
   result->idx_voice = idx_voice;
   result->props = bt_properties_simple_new(owner);
