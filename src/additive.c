@@ -82,6 +82,7 @@ typedef struct
   gfloat ringmod_rate;
   gfloat ringmod_depth;
   gfloat ringmod_ot_offset;
+  gfloat stereo;
   gfloat vol;
   GstBtNote note;
 
@@ -240,6 +241,9 @@ static void _set_property (GObject * object, guint prop_id, const GValue * value
   case PROP_BEND:
     self->bend = g_value_get_float(value);
     break;
+  case PROP_STEREO:
+    self->stereo = g_value_get_float(value);
+    break;
   case PROP_VOL:
     self->vol = g_value_get_float(value);
     break;
@@ -304,6 +308,9 @@ static void _get_property (GObject * object, guint prop_id, GValue * value, GPar
   case PROP_BEND:
     g_value_set_float(value, self->bend);
     break;
+  case PROP_STEREO:
+    g_value_set_float(value, self->stereo);
+    break;
   case PROP_VOL:
     g_value_set_float(value, self->vol);
     break;
@@ -329,13 +336,8 @@ static inline v4sf sin_ps_lut(const v4sf x) {
   return a + (b-a) * frac;
 }
 
-// Return a sin with range 0 -> 1
-static inline gfloat sin01(const gfloat x) {
-  return (1.0f + sin(x)) * 0.5f;
-}
-
 static gfloat* srate_prop_buf_get(const GstBtAdditive* const self, AdditivePropsSrate prop) {
-  return self->buf_srate_props + self->buf_samples * ((guint)prop-1);
+  return self->buf_srate_props + self->buf_samples/2 * ((guint)prop-1);
 }
 
 static gboolean srate_prop_is_controlled(const GstBtAdditive* const self, AdditivePropsSrate prop) {
@@ -347,7 +349,7 @@ static gboolean srate_prop_is_nonzero(const GstBtAdditive* const self, AdditiveP
 }
 
 static void srate_props_fill(GstBtAdditive* const self, const GstClockTime timestamp, const GstClockTime interval,
-                             const guint nbufelements) {
+                             const guint nframes) {
   for (guint i = 0; i < N_PROPERTIES_SRATE-1; ++i) {
     GValue src = G_VALUE_INIT;
     g_value_init(&src, G_TYPE_FLOAT);
@@ -356,9 +358,10 @@ static void srate_props_fill(GstBtAdditive* const self, const GstClockTime times
     gfloat value = g_value_get_float(&src);
     g_value_unset(&src);
 
-    gfloat* const sratebuf = &self->buf_srate_props[i * self->buf_samples];
-    for (guint j = 0; j < nbufelements; ++j)
+    gfloat* const sratebuf = &self->buf_srate_props[i * nframes];
+    for (guint j = 0; j < nframes; ++j) {
       sratebuf[j] = value;
+    }
   }
 
   memset(self->props_srate_nonzero, 0, sizeof(self->props_srate_nonzero));
@@ -366,7 +369,7 @@ static void srate_props_fill(GstBtAdditive* const self, const GstClockTime times
   
   // Fill this srate buffer with the calculated db-to-gain value.
   gfloat* const srate_amp_boost_db = srate_prop_buf_get(self, PROP_AMP_BOOST_DB);
-  for (guint i = 0; i < nbufelements; ++i) {
+  for (guint i = 0; i < nframes; ++i) {
     srate_amp_boost_db[i] = self->amp_boost_db_calc;
   }
   
@@ -375,7 +378,7 @@ static void srate_props_fill(GstBtAdditive* const self, const GstClockTime times
       self->voices[i],
       timestamp,
       interval,
-      nbufelements,
+      nframes,
       self->buf_srate_props,
       self->props_srate_nonzero,
       self->props_srate_controlled,
@@ -392,8 +395,11 @@ static gboolean is_machine_silent(GstBtAdditive* self) {
   }
 }
 
-static void fill_buffer_internal(GstBtAdditive* const self, GstBuffer* gstbuf, int nbufelements) {
-  self->nsamples_available = nbufelements;
+static void fill_buffer_internal(GstBtAdditive* const self, GstBuffer* gstbuf, int nframes) {
+  g_assert(nframes*2 % 4 == 0);
+  
+  self->nsamples_available = nframes*2;
+  memset(self->buf, 0, self->nsamples_available*sizeof(typeof(*self->buf)));
   
   const gfloat rate = self->parent.info.rate;
   const gfloat secs_per_sample = 1.0f / rate;
@@ -404,19 +410,16 @@ static void fill_buffer_internal(GstBtAdditive* const self, GstBuffer* gstbuf, i
 
   const gfloat freq_note = (gfloat)gstbt_tone_conversion_translate_from_number(self->tones, self->note);
 
-  const int nbuf4elements = nbufelements/4;
+  srate_props_fill(self, self->parent.running_time, GST_SECOND / rate, nframes);
 
-  srate_props_fill(self, self->parent.running_time, GST_SECOND / rate, nbufelements);
-
-  v4sf* const buf4 = (v4sf*)self->buf;
-  memset(buf4, 0, nbuf4elements*sizeof(typeof(*buf4)));
+  const int n4frames = nframes/4;
 
   if (is_machine_silent(self)) {
     return;
   }
 
   v4sf* const srate_bend = (v4sf*)srate_prop_buf_get(self, PROP_BEND);
-  for (guint i = 0; i < nbuf4elements; ++i) {
+  for (guint i = 0; i < n4frames; ++i) {
     srate_bend[i] = freq_note + freq_note * srate_bend[i];
   }
   
@@ -432,6 +435,7 @@ static void fill_buffer_internal(GstBtAdditive* const self, GstBuffer* gstbuf, i
   const v4sf* const srate_ampfreq_scale_exp = (v4sf*)srate_prop_buf_get(self, PROP_AMPFREQ_SCALE_EXP);
   const v4sf* const srate_ringmod_rate = (v4sf*)srate_prop_buf_get(self, PROP_RINGMOD_RATE);
   const v4sf* const srate_ringmod_depth = (v4sf*)srate_prop_buf_get(self, PROP_RINGMOD_DEPTH);
+  const v4sf* const srate_stereo = (v4sf*)srate_prop_buf_get(self, PROP_STEREO);
   
   for (int j = self->sum_start_idx, idx_o = 0; idx_o < self->overtones; ++j, ++idx_o) {
     g_assert(idx_o < MAX_OVERTONES);
@@ -440,7 +444,8 @@ static void fill_buffer_internal(GstBtAdditive* const self, GstBuffer* gstbuf, i
 	v4sf f = overtone->accum_rads * V4SF_UNIT;
 	v4sf f_rm = overtone->accum_rm_rads * V4SF_UNIT;
 
-    for (int i = 0; i < nbuf4elements; ++i) {
+    v4sf* buf4 = (v4sf*)self->buf;
+    for (int i = 0; i < n4frames; ++i) {
       const v4sf hscale_freq = srate_ampfreq_scale_idx_mul[i] * (gfloat)j + srate_ampfreq_scale_offset[i];
 	  
       const v4sf freq_note_bent = srate_bend[i];
@@ -459,7 +464,7 @@ static void fill_buffer_internal(GstBtAdditive* const self, GstBuffer* gstbuf, i
         amp_boost *= pow4f_method(window_sharp_cosine4(
 									freq_overtone,
 									srate_amp_boost_center[i],
-									22050.0,
+									22050,
 									srate_amp_boost_sharpness[i]),
 								  srate_amp_boost_exp[i]);
 	  }
@@ -482,10 +487,28 @@ static void fill_buffer_internal(GstBtAdditive* const self, GstBuffer* gstbuf, i
 	  f_rm[2] = f_rm[1] + inc_rm[2];
 	  f_rm[3] = f_rm[2] + inc_rm[3];
 
-      v4sf sample = (amp_boost + hscale_amp) * amp_mute_sample * sin4f(f);
-	  if (!v4sf_eq(srate_ringmod_rate[i], V4SF_ZERO))
-		sample *= powsin4f(f_rm, srate_ringmod_rate[i]);
-	  buf4[i] += sample;
+      const v4sf sample = (amp_boost + hscale_amp) * amp_mute_sample * sin4f(f);
+      
+      v4sf sample_l;
+      v4sf sample_r;
+	  if (!v4sf_eq(srate_ringmod_rate[i], V4SF_ZERO)) {
+		sample_l = sample * powsin4f(f_rm, srate_ringmod_rate[i]);
+		sample_r = sample * powsin4f(f_rm+F2PI*srate_stereo[i], srate_ringmod_rate[i]);
+      } else {
+        sample_l = sample;
+        sample_r = sample;
+      }
+      
+	  buf4[0][0] += sample_l[0];
+	  buf4[0][1] += sample_r[0];
+	  buf4[0][2] += sample_l[1];
+	  buf4[0][3] += sample_r[1];
+	  buf4[1][0] += sample_l[2];
+	  buf4[1][1] += sample_r[2];
+	  buf4[1][2] += sample_l[3];
+	  buf4[1][3] += sample_r[3];
+
+      buf4 += 2;
     }
 
     overtone->accum_rads = fmodf(f[3], F2PI);
@@ -493,9 +516,14 @@ static void fill_buffer_internal(GstBtAdditive* const self, GstBuffer* gstbuf, i
   }
   
   const v4sf* const vol_srate = (v4sf*)srate_prop_buf_get(self, PROP_VOL);
-  
-  for (int i = 0; i < nbuf4elements; ++i)
-    buf4[i] = 32767.5f * buf4[i] * vol_srate[i] - 0.5f;
+
+  v4sf* buf4 = (v4sf*)self->buf;
+  for (guint i = 0; i < n4frames; ++i) {
+    for (guint j = 0; j < 2; ++j) {
+      *buf4 = -32768 + (1 + *buf4 * vol_srate[i]) * 32767.5f;
+      ++buf4;
+    }
+  }
 }
 
 static gboolean process(GstBtAudioSynth* synth, GstBuffer* gstbuf, GstMapInfo* info) {
@@ -504,40 +532,45 @@ static gboolean process(GstBtAudioSynth* synth, GstBuffer* gstbuf, GstMapInfo* i
 
   GstBtAdditive* const self = GSTBT_ADDITIVE(synth);
 
-  const guint required_bufsize = (self->parent.generate_samples_per_buffer+3)*4/16*4;
+  const guint requested_frames = self->parent.generate_samples_per_buffer;
+  const guint required_bufsamps = (requested_frames+3)*4/16*4*2;
+  g_assert(required_bufsamps % 4 == 0);
   
-  if (self->buf_samples < required_bufsize) {
+  if (self->buf_samples < required_bufsamps) {
     GST_INFO("Reallocating internal buffers (%d samples, %d to %d 4-aligned)",
-             self->parent.generate_samples_per_buffer, self->buf_samples, required_bufsize);
+             self->parent.generate_samples_per_buffer, self->buf_samples, required_bufsamps);
     
-    self->buf_samples = required_bufsize;
+    self->buf_samples = required_bufsamps;
     
     self->buf = g_realloc(self->buf, sizeof(typeof(*(self->buf))) * self->buf_samples);
+
     self->buf_srate_props =
       g_realloc(self->buf_srate_props,
-                sizeof(typeof(*(self->buf_srate_props))) * self->buf_samples * (N_PROPERTIES_SRATE-1));
+                sizeof(typeof(*(self->buf_srate_props))) * (self->buf_samples/2) * (N_PROPERTIES_SRATE-1));
     
     for (int i = 0; i < MAX_VOICES; i++) {
-      gstbt_additivev_on_buf_size_change(self->voices[i], self->buf_samples);
+      gstbt_additivev_on_buf_size_change(self->voices[i], self->buf_samples/2);
     }
   }
 
   gint16* outbuf = (gint16*)(info->data);
-  guint to_copy = synth->generate_samples_per_buffer;
+  guint to_copy = requested_frames*2;
   const gfloat* internal_buf = self->buf + self->buf_samples - self->nsamples_available;
 
-  for (; self->nsamples_available > 0 && to_copy > 0; --self->nsamples_available, --to_copy)
+  for (; self->nsamples_available > 0 && to_copy > 0; --self->nsamples_available, --to_copy) {
     *(outbuf++) = (gint16)*(internal_buf++);
+  }
 
   if (self->nsamples_available == 0 && to_copy != 0) {
-    fill_buffer_internal(self, gstbuf, self->buf_samples);
+    fill_buffer_internal(self, gstbuf, self->buf_samples/2);
     internal_buf = self->buf;
   }
   
   g_assert(to_copy <= self->nsamples_available);
-  for (; to_copy > 0; --self->nsamples_available, --to_copy)
+  for (; to_copy > 0; --self->nsamples_available, --to_copy) {
     *(outbuf++) = (gint16)*(internal_buf++);
-  
+  }
+
   struct timespec clock_end;
   clock_gettime(CLOCK_MONOTONIC_RAW, &clock_end);
   self->time_accum += (clock_end.tv_sec - clock_start.tv_sec) * 1e9L + (clock_end.tv_nsec - clock_start.tv_nsec);
@@ -556,7 +589,7 @@ static void _negotiate (GstBtAudioSynth* base, GstCaps* caps) {
   for (guint i = 0; i < gst_caps_get_size(caps); ++i) {
     GstStructure* const s = gst_caps_get_structure(caps, i);
     
-    gst_structure_fixate_field_nearest_int(s, "channels", 1);
+    gst_structure_fixate_field_nearest_int(s, "channels", 2);
 
     GST_LOG("caps structure %d: %" GST_PTR_FORMAT, i, (void*)s);
   }
@@ -626,9 +659,9 @@ G_DIR_SEPARATOR_S "" PACKAGE "-gst" G_DIR_SEPARATOR_S "GstBtSimSyn.html");*/
 
   // Instance properties
   properties[PROP_OVERTONES] =
-    g_param_spec_uint("overtones", "Overtones", "", 0, MAX_OVERTONES, 10, flags);
+    g_param_spec_uint("overtones", "Overtones", "Overtones", 0, MAX_OVERTONES, 10, flags);
   properties[PROP_FREQ_MAX] =
-    g_param_spec_float("freq-max", "Freq Max", "", 0, 22050, 22050, flags);
+    g_param_spec_float("freq-max", "Freq Max", "Freq Max", 0, 22050, 22050, flags);
   properties[PROP_SUM_START_IDX] =
     g_param_spec_int("sum-start-idx", "Sum Start Idx", "Sum Start Index", -10, 25, 1, flags);
   properties[PROP_AMP_POW_BASE] =
@@ -642,25 +675,27 @@ G_DIR_SEPARATOR_S "" PACKAGE "-gst" G_DIR_SEPARATOR_S "GstBtSimSyn.html");*/
   properties[PROP_AMPFREQ_SCALE_EXP] =
     g_param_spec_float("ampfreq-scale-exp", "Ampfreq Scale Exp", "Amplitude + Frequency Scale Exponent", -10, 1, -1, flags);
   properties[PROP_AMP_BOOST_CENTER] =
-    g_param_spec_float("amp-boost-center", "AmpBoost Center", "", 0, 22050, 0, flags);
+    g_param_spec_float("amp-boost-center", "AmpBoost Cntr", "AmpBoost Center", 0, 22050, 0, flags);
   properties[PROP_AMP_BOOST_SHARPNESS] =
-    g_param_spec_float("amp-boost-sharpness", "AmpBoost Sharpness", "", 0, 200, 0, flags);
+    g_param_spec_float("amp-boost-sharpness", "AmpBoost Shrp", "AmpBoost Sharpness", 0, 200, 0, flags);
   properties[PROP_AMP_BOOST_EXP] =
-    g_param_spec_float("amp-boost-exp", "AmpBoost Exp", "", 0, 1024, 2, flags);
+    g_param_spec_float("amp-boost-exp", "AmpBoost Exp", "AmpBoost Exp", 0, 1024, 2, flags);
   properties[PROP_AMP_BOOST_DB] =
-    g_param_spec_float("amp-boost-db", "AmpBoost dB", "", 0, 30, 2, flags);
+    g_param_spec_float("amp-boost-db", "AmpBoost dB", "AmpBoost dB", 0, 30, 2, flags);
   properties[PROP_RINGMOD_RATE] =
-    g_param_spec_float("ringmod-rate", "Ringmod Rate", "", 0, 5, 0, flags);
+    g_param_spec_float("ringmod-rate", "Ringmod Rate", "Ringmod Rate", 0, 5, 0, flags);
   properties[PROP_RINGMOD_DEPTH] =
-    g_param_spec_float("ringmod-depth", "Ringmod Depth", "", 0, 0.5, 0, flags);
+    g_param_spec_float("ringmod-depth", "Ringmod Depth", "Ringmod Depth", 0, 0.5, 0, flags);
   properties[PROP_RINGMOD_OT_OFFSET] =
     g_param_spec_float("ringmod-ot-offset", "Ringmod OT Offset", "Ring Modulation Overtone Offset", 0, 1, 0, flags);
   properties[PROP_BEND] =
-    g_param_spec_float("bend", "Bend", "", -1000, 1000, 0, flags);
+    g_param_spec_float("bend", "Bend", "Bend", -1000, 1000, 0, flags);
+  properties[PROP_STEREO] =
+    g_param_spec_float("stereo", "Stereo", "Stereo Width", 0, 1, 0.5, flags);
   properties[PROP_VOL] =
-    g_param_spec_float("vol", "vol", "", 0, 1, 0.5, flags);
+    g_param_spec_float("vol", "Vol", "Volume", 0, 1, 0.5, flags);
   properties[PROP_NOTE] =
-    g_param_spec_enum("note", "Note", "", GSTBT_TYPE_NOTE, GSTBT_NOTE_NONE,
+    g_param_spec_enum("note", "Note", "Note", GSTBT_TYPE_NOTE, GSTBT_NOTE_NONE,
                       G_PARAM_WRITABLE | GST_PARAM_CONTROLLABLE | G_PARAM_STATIC_STRINGS);
 
   for (int i = 1; i < N_PROPERTIES; ++i)

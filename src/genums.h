@@ -35,6 +35,7 @@ typedef enum {
   PROP_RINGMOD_DEPTH,
   PROP_RINGMOD_OT_OFFSET,
   PROP_BEND,
+  PROP_STEREO,
   PROP_VOL,
   N_PROPERTIES_SRATE /*< skip >*/
 } AdditivePropsSrate;

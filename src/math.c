@@ -229,7 +229,7 @@ v4sf exp4f(v4sf x)
 v4sf log4f(v4sf x)
 {
 /* Test for domain */
-  const v4si out_of_domain = x <= 0.0;
+  const v4si out_of_domain = x <= 0;
 
   if (v4si_eq(out_of_domain, V4SI_TRUE))
 	return MINLOGF;

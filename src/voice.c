@@ -17,6 +17,7 @@
 */
 
 #include "src/voice.h"
+#include "src/debug.h"
 #include "src/adsr.h"
 #include "src/lfo.h"
 #include "src/genums.h"
@@ -138,7 +139,7 @@ void gstbt_additivev_mod_value_array_f_for_prop_idx(
     
     gboolean any_nonzero = gstbt_prop_srate_cs_get_value_array_f(
       (GstBtPropSrateControlSource*)self->adsr, timestamp, interval, n_values, (gfloat*)self->srate_buf);
-	
+    
     any_nonzero =
       gstbt_lfo_float_mod_value_array_accum(self->lfo, timestamp, interval, (gfloat*)self->srate_buf, n_values, voices)
 	  || any_nonzero;
