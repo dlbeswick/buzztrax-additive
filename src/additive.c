@@ -63,6 +63,7 @@ typedef struct {
 typedef struct {
   GstBtNote note;
   StateOvertone states_overtone[MAX_OVERTONES];
+  GstBtAdditiveV* voices[MAX_VOICES];
   gfloat* buf_srate_props;
   gboolean props_srate_nonzero[N_PROPERTIES_SRATE];
   gboolean props_srate_controlled[N_PROPERTIES_SRATE];
