@@ -91,15 +91,15 @@ static inline v4sf bitselect4f(const v4si cond, const v4sf if_t, const v4sf if_f
 }
 
 static inline gboolean v4ui_eq(v4ui a, v4ui b) {
-  return a[0] == b[0] && a[1] == b[1] && a[2] == b[2] && a[3] == b[3];
+  return _mm_movemask_epi8(_mm_cmpeq_epi32((__m128i)a, (__m128i)b));
 }
 
 static inline gboolean v4sf_eq(v4sf a, v4sf b) {
-  return a[0] == b[0] && a[1] == b[1] && a[2] == b[2] && a[3] == b[3];
+  return _mm_movemask_epi8((__m128i)_mm_cmpeq_ps(a, b));
 }
 
 static inline gboolean v4si_eq(v4si a, v4si b) {
-  return a[0] == b[0] && a[1] == b[1] && a[2] == b[2] && a[3] == b[3];
+  return _mm_movemask_epi8(_mm_cmpeq_epi32((__m128i)a, (__m128i)b));
 }
 
 static inline v4sf max4f(v4sf a, v4sf b) {
