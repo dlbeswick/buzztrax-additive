@@ -37,8 +37,13 @@ struct _GstBtAdditiveV
   
   GstBtAdsr* adsr;
   GstBtLfoFloat* lfo;
+  
   GParamSpec** parent_props;
   guint n_parent_props;
+  
+  GParamSpec** properties;
+  guint n_properties;
+  
   guint srate_buf_size;
   v4sf* srate_buf;
   GstClockTime timestamp_last;
@@ -164,9 +169,28 @@ void gstbt_additivev_on_buf_size_change(GstBtAdditiveV* const self, guint n_samp
   gstbt_lfo_float_on_buf_size_change(self->lfo, n_samples);
 }
 
+void gstbt_additivev_copy(GstBtAdditiveV* src, GstBtAdditiveV* dst) {
+  for (guint i = 0; i < src->n_properties; ++i) {
+    GValue src_v = G_VALUE_INIT;
+    g_value_init(&src_v, src->properties[i]->value_type);
+
+    g_object_get_property((GObject*)src, src->properties[i]->name, &src_v);
+    g_object_set_property((GObject*)dst, src->properties[i]->name, &src_v);
+
+    g_value_unset(&src_v);
+  }
+}
+
 static void gstbt_additivev_init(GstBtAdditiveV* const self) {
   self->adsr = gstbt_adsr_new((GObject*)self, "");
   self->timestamp_last = -1;
+  self->properties = g_object_class_list_properties(G_OBJECT_CLASS(G_OBJECT_GET_CLASS(self)), &self->n_properties);
+}
+
+static void finalize(GObject* const gobj) {
+  GstBtAdditiveV* const self = (GstBtAdditiveV*)gobj;
+  g_free(self->properties);
+  G_OBJECT_CLASS(gstbt_additivev_parent_class)->finalize(gobj);
 }
 
 static void dispose(GObject* const gobj) {
@@ -174,6 +198,7 @@ static void dispose(GObject* const gobj) {
   g_clear_object(&self->adsr);
   g_clear_object(&self->lfo);
   g_clear_object(&self->srate_buf);
+  G_OBJECT_CLASS(gstbt_additivev_parent_class)->dispose(gobj);
 }
 
 static void gstbt_additivev_class_init(GstBtAdditiveVClass* const klass) {
@@ -181,6 +206,7 @@ static void gstbt_additivev_class_init(GstBtAdditiveVClass* const klass) {
   gobject_class->set_property = property_set;
   gobject_class->get_property = property_get;
   gobject_class->dispose = dispose;
+  gobject_class->finalize = finalize;
 
   const GParamFlags flags = (GParamFlags)
 	(G_PARAM_READWRITE | GST_PARAM_CONTROLLABLE | G_PARAM_STATIC_STRINGS);

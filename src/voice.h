@@ -26,6 +26,7 @@ G_DECLARE_FINAL_TYPE(GstBtAdditiveV, gstbt_additivev, GSTBT, ADDITIVEV, GstObjec
 
 GstBtAdditiveV* gstbt_additivev_new(GParamSpec** parent_props, guint n_parent_props, guint idx_voice);
 
+void gstbt_additivev_copy(GstBtAdditiveV* src, GstBtAdditiveV* dst);
 void gstbt_additivev_process(GstBtAdditiveV* self, GstBuffer* gstbuf);
 void gstbt_additivev_note_off(GstBtAdditiveV* self, GstClockTime time);
 void gstbt_additivev_note_on(GstBtAdditiveV* self, GstClockTime time);

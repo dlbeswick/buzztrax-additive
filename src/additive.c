@@ -49,23 +49,29 @@ GST_DEBUG_CATEGORY(GST_CAT_DEFAULT);
 static gfloat lut_sin[1024];
 
 enum { MAX_OVERTONES = 600 };
+enum { MAX_VIRTUAL_VOICES = 10 };
 
 typedef struct {
   gfloat accum_rads;
   gfloat accum_rm_rads;
 } StateOvertone;
 
-typedef struct
-{
+typedef struct {
   GstBtAudioSynthClass parent_class;
 } GstBtAdditiveClass;
 
+typedef struct {
+  GstBtNote note;
+  StateOvertone states_overtone[MAX_OVERTONES];
+  gfloat* buf_srate_props;
+  gboolean props_srate_nonzero[N_PROPERTIES_SRATE];
+  gboolean props_srate_controlled[N_PROPERTIES_SRATE];
+} StateVirtualVoice;
+
 // Class instance data.
-typedef struct
-{
+typedef struct {
   GstBtAudioSynth parent;
 
-  gulong n_voices;
   guint overtones;
   gfloat freq_max;
   gint sum_start_idx;
@@ -85,20 +91,25 @@ typedef struct
   gfloat stereo;
   gfloat vol;
   GstBtNote note;
+  
+  // These are standard Buzztrax voices, repurposed as ADSR+LFOs.
+  gulong n_voices;
+
+  // These are the 'virtual voices' allowing multiple notes to play.
+  guint n_virtual_voices;
+  guint idx_next_virtual_voice;
+  StateVirtualVoice virtual_voices[MAX_VIRTUAL_VOICES];
+  GstBtAdditiveV* voices[MAX_VOICES];
 
   gfloat ringmod_ot_offset_calc;
   gfloat amp_boost_db_calc;
-  gfloat accum_rads;
+  
   GstBtToneConversion* tones;
-  StateOvertone* states_overtone;
-  GstBtAdditiveV* voices[MAX_VOICES];
 
   guint buf_samples;
   guint nsamples_available;
   gfloat* buf;
-  gfloat* buf_srate_props;
-  gboolean props_srate_nonzero[N_PROPERTIES_SRATE];
-  gboolean props_srate_controlled[N_PROPERTIES_SRATE];
+  gfloat* buf_vvoice;
 
   gint calls;
   long time_accum;
@@ -176,13 +187,21 @@ static void _set_property (GObject * object, guint prop_id, const GValue * value
   case PROP_NOTE: {
     GstBtNote note = g_value_get_enum(value);
     if (note == GSTBT_NOTE_OFF) {
+      // fix
+      const guint idx_last_virtual_voice = (self->idx_next_virtual_voice - 1) % self->n_virtual_voices;
+      StateVirtualVoice* vvoice = &self->virtual_voices[idx_last_virtual_voice];
       for (guint i = 0; i < self->n_voices; ++i) {
-        gstbt_additivev_note_off(self->voices[i], self->parent.running_time);
+        gstbt_additivev_note_off(vvoice->voices[i], self->parent.running_time);
       }
     } else if (note != GSTBT_NOTE_NONE) {
+      StateVirtualVoice* vvoice = &self->virtual_voices[self->idx_next_virtual_voice];
+      self->idx_next_virtual_voice = (self->idx_next_virtual_voice + 1) % self->n_virtual_voices;
+    
       self->note = note;
+      vvoice->note = note;
       for (guint i = 0; i < self->n_voices; ++i) {
-        gstbt_additivev_note_on(self->voices[i], self->parent.running_time);
+        gstbt_additivev_copy(self->voices[i], vvoice->voices[i]);
+        gstbt_additivev_note_on(vvoice->voices[i], self->parent.running_time);
       }
     }
     break;
@@ -233,9 +252,11 @@ static void _set_property (GObject * object, guint prop_id, const GValue * value
   case PROP_RINGMOD_OT_OFFSET:
     self->ringmod_ot_offset = g_value_get_float(value);
     self->ringmod_ot_offset_calc = self->ringmod_ot_offset * F2PI;
-    for (int i = 0; i < MAX_OVERTONES; ++i) {
-      self->states_overtone[i].accum_rads = self->ringmod_ot_offset_calc;
-      self->states_overtone[i].accum_rm_rads = self->ringmod_ot_offset_calc;
+    for (int j = 0; j < MAX_VIRTUAL_VOICES; ++j) {
+      for (int i = 0; i < MAX_OVERTONES; ++i) {
+        self->virtual_voices[j].states_overtone[i].accum_rads = self->ringmod_ot_offset_calc;
+        self->virtual_voices[j].states_overtone[i].accum_rm_rads = self->ringmod_ot_offset_calc;
+      }
     }
     break;
   case PROP_BEND:
@@ -243,6 +264,9 @@ static void _set_property (GObject * object, guint prop_id, const GValue * value
     break;
   case PROP_STEREO:
     self->stereo = g_value_get_float(value);
+    break;
+  case PROP_VIRTUAL_VOICES:
+    self->n_virtual_voices = g_value_get_uint(value);
     break;
   case PROP_VOL:
     self->vol = g_value_get_float(value);
@@ -311,6 +335,9 @@ static void _get_property (GObject * object, guint prop_id, GValue * value, GPar
   case PROP_STEREO:
     g_value_set_float(value, self->stereo);
     break;
+  case PROP_VIRTUAL_VOICES:
+    g_value_set_uint(value, self->n_virtual_voices);
+    break;
   case PROP_VOL:
     g_value_set_float(value, self->vol);
     break;
@@ -336,115 +363,112 @@ static inline v4sf sin_ps_lut(const v4sf x) {
   return a + (b-a) * frac;
 }
 
-static gfloat* srate_prop_buf_get(const GstBtAdditive* const self, AdditivePropsSrate prop) {
-  return self->buf_srate_props + self->buf_samples/2 * ((guint)prop-1);
+static gfloat* srate_prop_buf_get(const GstBtAdditive* const self, const StateVirtualVoice* const vvoice, 
+                                  AdditivePropsSrate prop) {
+  return vvoice->buf_srate_props + self->buf_samples/2 * ((guint)prop-1);
 }
 
-static gboolean srate_prop_is_controlled(const GstBtAdditive* const self, AdditivePropsSrate prop) {
+static gboolean srate_prop_is_controlled(const StateVirtualVoice* const self, AdditivePropsSrate prop) {
   return self->props_srate_controlled[(guint)prop-1];
 }
 
-static gboolean srate_prop_is_nonzero(const GstBtAdditive* const self, AdditivePropsSrate prop) {
+static gboolean srate_prop_is_nonzero(const StateVirtualVoice* const self, AdditivePropsSrate prop) {
   return self->props_srate_nonzero[(guint)prop-1];
 }
 
-static void srate_props_fill(GstBtAdditive* const self, const GstClockTime timestamp, const GstClockTime interval,
-                             const guint nframes) {
-  for (guint i = 0; i < N_PROPERTIES_SRATE-1; ++i) {
+static void srate_props_fill(GstBtAdditive* const self, StateVirtualVoice* const vvoice,
+                             const GstClockTime timestamp, const GstClockTime interval, const guint nframes) {
+  for (guint i = 1; i < N_PROPERTIES_SRATE; ++i) {
     GValue src = G_VALUE_INIT;
     g_value_init(&src, G_TYPE_FLOAT);
-    g_object_get_property((GObject*)self, properties[i+1]->name, &src);
+    g_object_get_property((GObject*)self, properties[i]->name, &src);
     
     gfloat value = g_value_get_float(&src);
     g_value_unset(&src);
 
-    gfloat* const sratebuf = &self->buf_srate_props[i * nframes];
+    gfloat* const sratebuf = srate_prop_buf_get(self, vvoice, i);
     for (guint j = 0; j < nframes; ++j) {
       sratebuf[j] = value;
     }
   }
 
-  memset(self->props_srate_nonzero, 0, sizeof(self->props_srate_nonzero));
-  memset(self->props_srate_controlled, 0, sizeof(self->props_srate_controlled));
+  memset(vvoice->props_srate_nonzero, 0, sizeof(vvoice->props_srate_nonzero));
+  memset(vvoice->props_srate_controlled, 0, sizeof(vvoice->props_srate_controlled));
   
   // Fill this srate buffer with the calculated db-to-gain value.
-  gfloat* const srate_amp_boost_db = srate_prop_buf_get(self, PROP_AMP_BOOST_DB);
+  gfloat* const srate_amp_boost_db = srate_prop_buf_get(self, vvoice, PROP_AMP_BOOST_DB);
   for (guint i = 0; i < nframes; ++i) {
     srate_amp_boost_db[i] = self->amp_boost_db_calc;
   }
   
   for (guint i = 0; i < self->n_voices; ++i) {
     gstbt_additivev_mod_value_array_f_for_prop(
-      self->voices[i],
+      vvoice->voices[i],
       timestamp,
       interval,
       nframes,
-      self->buf_srate_props,
-      self->props_srate_nonzero,
-      self->props_srate_controlled,
-      self->voices
+      vvoice->buf_srate_props,
+      vvoice->props_srate_nonzero,
+      vvoice->props_srate_controlled,
+      vvoice->voices
       );
   }
 }
 
-static gboolean is_machine_silent(GstBtAdditive* self) {
-  if (srate_prop_is_controlled(self, PROP_VOL)) {
-    return !srate_prop_is_nonzero(self, PROP_VOL);
+static gboolean is_machine_silent(const GstBtAdditive* const self, const StateVirtualVoice* const vvoice) {
+  if (srate_prop_is_controlled(vvoice, PROP_VOL)) {
+    return !srate_prop_is_nonzero(vvoice, PROP_VOL);
   } else {
     return self->vol == 0;
   }
 }
 
-static void fill_buffer_internal(GstBtAdditive* const self, GstBuffer* gstbuf, int nframes) {
+static void fill_buffer_internal(GstBtAdditive* const self, StateVirtualVoice* const vvoice, GstBuffer* gstbuf,
+                                 int nframes) {
   g_assert(nframes*2 % 4 == 0);
-  
-  self->nsamples_available = nframes*2;
-  memset(self->buf, 0, self->nsamples_available*sizeof(typeof(*self->buf)));
+
+  memset(self->buf_vvoice, 0, self->nsamples_available*sizeof(typeof(*self->buf_vvoice)));
   
   const gfloat rate = self->parent.info.rate;
   const gfloat secs_per_sample = 1.0f / rate;
 
-  for (int i = 0; i < self->n_voices; ++i) {
-    gstbt_additivev_process(self->voices[i], gstbuf);
-  }
+  const gfloat freq_note = (gfloat)gstbt_tone_conversion_translate_from_number(self->tones, vvoice->note);
 
-  const gfloat freq_note = (gfloat)gstbt_tone_conversion_translate_from_number(self->tones, self->note);
-
-  srate_props_fill(self, self->parent.running_time, GST_SECOND / rate, nframes);
+  srate_props_fill(self, vvoice, self->parent.running_time, GST_SECOND / rate, nframes);
 
   const int n4frames = nframes/4;
 
-  if (is_machine_silent(self)) {
+  if (is_machine_silent(self, vvoice)) {
     return;
   }
 
-  v4sf* const srate_bend = (v4sf*)srate_prop_buf_get(self, PROP_BEND);
+  v4sf* const srate_bend = (v4sf*)srate_prop_buf_get(self, vvoice, PROP_BEND);
   for (guint i = 0; i < n4frames; ++i) {
     srate_bend[i] = freq_note + freq_note * srate_bend[i];
   }
   
-  const v4sf* const srate_freq_max = (v4sf*)srate_prop_buf_get(self, PROP_FREQ_MAX);
-  const v4sf* const srate_ampfreq_scale_idx_mul = (v4sf*)srate_prop_buf_get(self, PROP_AMPFREQ_SCALE_IDX_MUL);
-  const v4sf* const srate_amp_boost_center = (v4sf*)srate_prop_buf_get(self, PROP_AMP_BOOST_CENTER);
-  const v4sf* const srate_amp_boost_sharpness = (v4sf*)srate_prop_buf_get(self, PROP_AMP_BOOST_SHARPNESS);
-  const v4sf* const srate_amp_boost_exp = (v4sf*)srate_prop_buf_get(self, PROP_AMP_BOOST_EXP);
-  const v4sf* const srate_amp_boost_db = (v4sf*)srate_prop_buf_get(self, PROP_AMP_BOOST_DB);
-  const v4sf* const srate_amp_pow_base = (v4sf*)srate_prop_buf_get(self, PROP_AMP_POW_BASE);
-  const v4sf* const srate_amp_exp_idx_mul = (v4sf*)srate_prop_buf_get(self, PROP_AMP_EXP_IDX_MUL);
-  const v4sf* const srate_ampfreq_scale_offset = (v4sf*)srate_prop_buf_get(self, PROP_AMPFREQ_SCALE_OFFSET);
-  const v4sf* const srate_ampfreq_scale_exp = (v4sf*)srate_prop_buf_get(self, PROP_AMPFREQ_SCALE_EXP);
-  const v4sf* const srate_ringmod_rate = (v4sf*)srate_prop_buf_get(self, PROP_RINGMOD_RATE);
-  const v4sf* const srate_ringmod_depth = (v4sf*)srate_prop_buf_get(self, PROP_RINGMOD_DEPTH);
-  const v4sf* const srate_stereo = (v4sf*)srate_prop_buf_get(self, PROP_STEREO);
+  const v4sf* const srate_freq_max = (v4sf*)srate_prop_buf_get(self, vvoice, PROP_FREQ_MAX);
+  const v4sf* const srate_ampfreq_scale_idx_mul = (v4sf*)srate_prop_buf_get(self, vvoice, PROP_AMPFREQ_SCALE_IDX_MUL);
+  const v4sf* const srate_amp_boost_center = (v4sf*)srate_prop_buf_get(self, vvoice, PROP_AMP_BOOST_CENTER);
+  const v4sf* const srate_amp_boost_sharpness = (v4sf*)srate_prop_buf_get(self, vvoice, PROP_AMP_BOOST_SHARPNESS);
+  const v4sf* const srate_amp_boost_exp = (v4sf*)srate_prop_buf_get(self, vvoice, PROP_AMP_BOOST_EXP);
+  const v4sf* const srate_amp_boost_db = (v4sf*)srate_prop_buf_get(self, vvoice, PROP_AMP_BOOST_DB);
+  const v4sf* const srate_amp_pow_base = (v4sf*)srate_prop_buf_get(self, vvoice, PROP_AMP_POW_BASE);
+  const v4sf* const srate_amp_exp_idx_mul = (v4sf*)srate_prop_buf_get(self, vvoice, PROP_AMP_EXP_IDX_MUL);
+  const v4sf* const srate_ampfreq_scale_offset = (v4sf*)srate_prop_buf_get(self, vvoice, PROP_AMPFREQ_SCALE_OFFSET);
+  const v4sf* const srate_ampfreq_scale_exp = (v4sf*)srate_prop_buf_get(self, vvoice, PROP_AMPFREQ_SCALE_EXP);
+  const v4sf* const srate_ringmod_rate = (v4sf*)srate_prop_buf_get(self, vvoice, PROP_RINGMOD_RATE);
+  const v4sf* const srate_ringmod_depth = (v4sf*)srate_prop_buf_get(self, vvoice, PROP_RINGMOD_DEPTH);
+  const v4sf* const srate_stereo = (v4sf*)srate_prop_buf_get(self, vvoice, PROP_STEREO);
   
   for (int j = self->sum_start_idx, idx_o = 0; idx_o < self->overtones; ++j, ++idx_o) {
     g_assert(idx_o < MAX_OVERTONES);
-    StateOvertone* const overtone = &self->states_overtone[idx_o];
+    StateOvertone* const overtone = &vvoice->states_overtone[idx_o];
     
 	v4sf f = overtone->accum_rads * V4SF_UNIT;
 	v4sf f_rm = overtone->accum_rm_rads * V4SF_UNIT;
 
-    v4sf* buf4 = (v4sf*)self->buf;
+    v4sf* buf4 = (v4sf*)self->buf_vvoice;
     for (int i = 0; i < n4frames; ++i) {
       const v4sf hscale_freq = srate_ampfreq_scale_idx_mul[i] * (gfloat)j + srate_ampfreq_scale_offset[i];
 	  
@@ -515,14 +539,12 @@ static void fill_buffer_internal(GstBtAdditive* const self, GstBuffer* gstbuf, i
     overtone->accum_rm_rads = fmodf(f_rm[3], F2PI);
   }
   
-  const v4sf* const vol_srate = (v4sf*)srate_prop_buf_get(self, PROP_VOL);
+  const v4sf* const vol_srate = (v4sf*)srate_prop_buf_get(self, vvoice, PROP_VOL);
 
-  v4sf* buf4 = (v4sf*)self->buf;
+  v4sf* buf4 = (v4sf*)self->buf_vvoice;
   for (guint i = 0; i < n4frames; ++i) {
-    for (guint j = 0; j < 2; ++j) {
-      *buf4 = -32768 + (1 + *buf4 * vol_srate[i]) * 32767.5f;
-      ++buf4;
-    }
+    *(buf4++) *= vol_srate[i];
+    *(buf4++) *= vol_srate[i];
   }
 }
 
@@ -537,19 +559,23 @@ static gboolean process(GstBtAudioSynth* synth, GstBuffer* gstbuf, GstMapInfo* i
   g_assert(required_bufsamps % 4 == 0);
   
   if (self->buf_samples < required_bufsamps) {
-    GST_INFO("Reallocating internal buffers (%d samples, %d to %d 4-aligned)",
+    GST_INFO("Reallocating internal buffers (%d frames, from %d to %d 4-aligned)",
              self->parent.generate_samples_per_buffer, self->buf_samples, required_bufsamps);
     
     self->buf_samples = required_bufsamps;
     
     self->buf = g_realloc(self->buf, sizeof(typeof(*(self->buf))) * self->buf_samples);
+    self->buf_vvoice = g_realloc(self->buf_vvoice, sizeof(typeof(*(self->buf_vvoice))) * self->buf_samples);
 
-    self->buf_srate_props =
-      g_realloc(self->buf_srate_props,
-                sizeof(typeof(*(self->buf_srate_props))) * (self->buf_samples/2) * (N_PROPERTIES_SRATE-1));
-    
-    for (int i = 0; i < MAX_VOICES; i++) {
-      gstbt_additivev_on_buf_size_change(self->voices[i], self->buf_samples/2);
+    for (guint i = 0; i < MAX_VIRTUAL_VOICES; ++i) {
+      self->virtual_voices[i].buf_srate_props =
+        g_realloc(
+          self->virtual_voices[i].buf_srate_props,
+          sizeof(typeof(*(self->virtual_voices[i].buf_srate_props))) * (self->buf_samples/2) * (N_PROPERTIES_SRATE-1));
+      
+      for (int j = 0; j < MAX_VOICES; j++) {
+        gstbt_additivev_on_buf_size_change(self->virtual_voices[i].voices[j], self->buf_samples/2);
+      }
     }
   }
 
@@ -562,7 +588,26 @@ static gboolean process(GstBtAudioSynth* synth, GstBuffer* gstbuf, GstMapInfo* i
   }
 
   if (self->nsamples_available == 0 && to_copy != 0) {
-    fill_buffer_internal(self, gstbuf, self->buf_samples/2);
+    for (int i = 0; i < self->n_voices; ++i) {
+      gstbt_additivev_process(self->voices[i], gstbuf);
+    }
+
+    self->nsamples_available = self->buf_samples;
+    memset(self->buf, 0, self->nsamples_available*sizeof(typeof(*self->buf)));
+  
+    v4sf* const buf4 = (v4sf*)self->buf;
+    v4sf* const buf4_vvoice = (v4sf*)self->buf_vvoice;
+    for (guint i = 0; i < self->n_virtual_voices; ++i) {
+      fill_buffer_internal(self, &self->virtual_voices[i], gstbuf, self->buf_samples/2);
+      for (guint j = 0; j < self->buf_samples/4; ++j) {
+        buf4[j] += buf4_vvoice[j];
+      }
+    }
+
+    for (guint i = 0; i < self->buf_samples/4; ++i) {
+      buf4[i] = -32768 + (1 + buf4[i]) * 32767.5f;
+    }
+    
     internal_buf = self->buf;
   }
   
@@ -597,16 +642,31 @@ static void _negotiate (GstBtAudioSynth* base, GstCaps* caps) {
 
 static void gstbt_additive_init(GstBtAdditive* const self) {
   self->tones = gstbt_tone_conversion_new(GSTBT_TONE_CONVERSION_EQUAL_TEMPERAMENT);
-  self->states_overtone = g_new0(StateOvertone, MAX_OVERTONES);
+
+  for (int j = 0; j < MAX_VIRTUAL_VOICES; j++) {
+    for (int i = 0; i < MAX_VOICES; i++) {
+      GstBtAdditiveV* voice = gstbt_additivev_new(&properties[1], N_PROPERTIES_SRATE, i);
+
+      char name[7];
+      g_snprintf(name, sizeof(name), "voice%1d_%1d",j,i);
+        
+      gst_object_set_name((GstObject*)voice, name);
+      gst_object_set_parent((GstObject*)voice, (GstObject *)self);
+
+      self->virtual_voices[j].voices[i] = voice;
+    }
+  }
 
   for (int i = 0; i < MAX_VOICES; i++) {
-    self->voices[i] = gstbt_additivev_new(&properties[1], N_PROPERTIES_SRATE, i);
+    GstBtAdditiveV* voice = gstbt_additivev_new(&properties[1], N_PROPERTIES_SRATE, i);
 
     char name[7];
-    g_snprintf(name, sizeof(name), "voice%1d", i);
+    g_snprintf(name, sizeof(name), "voice%1d",i);
         
-    gst_object_set_name((GstObject *)self->voices[i], name);
-    gst_object_set_parent((GstObject *)self->voices[i], (GstObject *)self);
+    gst_object_set_name((GstObject*)voice, name);
+    gst_object_set_parent((GstObject*)voice, (GstObject *)self);
+
+    self->voices[i] = voice;
   }
 }
 
@@ -614,8 +674,10 @@ static void _dispose (GObject* object) {
   GstBtAdditive* self = GSTBT_ADDITIVE(object);
   g_clear_object(&self->tones);
   g_clear_pointer(&self->buf, g_free);
-  g_clear_pointer(&self->buf_srate_props, g_free);
-  g_clear_pointer(&self->states_overtone, g_free);
+  g_clear_pointer(&self->buf_vvoice, g_free);
+  for (int i = 0; i < MAX_VIRTUAL_VOICES; i++) {
+    g_clear_pointer(&self->virtual_voices[i].buf_srate_props, g_free);
+  }
   
   // It's necessary to unparent children so they will be unreffed and cleaned up. GstObject doesn't hold variable
   // links to its children, so it wouldn't know to unparent them and this would cause a memory leak.
@@ -692,6 +754,8 @@ G_DIR_SEPARATOR_S "" PACKAGE "-gst" G_DIR_SEPARATOR_S "GstBtSimSyn.html");*/
     g_param_spec_float("bend", "Bend", "Bend", -1000, 1000, 0, flags);
   properties[PROP_STEREO] =
     g_param_spec_float("stereo", "Stereo", "Stereo Width", 0, 1, 0.5, flags);
+  properties[PROP_VIRTUAL_VOICES] =
+    g_param_spec_uint("virtual-voices", "Virt. Voice", "Virtual Voices", 1, MAX_VIRTUAL_VOICES, 1, flags);
   properties[PROP_VOL] =
     g_param_spec_float("vol", "Vol", "Volume", 0, 1, 0.5, flags);
   properties[PROP_NOTE] =
