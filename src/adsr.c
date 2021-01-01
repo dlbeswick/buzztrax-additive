@@ -17,6 +17,7 @@
 */
 
 #include "src/adsr.h"
+#include "src/debug.h"
 #include "src/propsratecontrolsource.h"
 #include "src/math.h"
 #include "src/properties_simple.h"
@@ -51,6 +52,13 @@ struct _GstBtAdsr {
   GstClockTime ts_release;
   GstClockTime ts_off_end;
 
+  v4ui ts_zero_end4;
+  v4ui ts_trigger4;
+  v4ui ts_attack_end4;
+  v4ui ts_decay_end4;
+  v4ui ts_release4;
+  v4ui ts_off_end4;
+  
   BtPropertiesSimple* props;
 };
 
@@ -58,6 +66,10 @@ G_DEFINE_TYPE(GstBtAdsr, gstbt_adsr, gstbt_prop_srate_cs_get_type());
 
 static inline gfloat ab_select(gfloat a, gfloat b, GstClockTime timeb, GstClockTime time) {
   return bitselect_f(time < timeb, a, b);
+}
+
+static inline v4sf ab_select4(v4sf a, v4sf b, v4ui timeb, v4ui time) {
+  return bitselect4f(time < timeb, a, b);
 }
 
 static inline gfloat lerp_knee(gfloat a, gfloat b,
@@ -73,9 +85,18 @@ static inline gfloat plerp(gfloat a, gfloat b,
 						   GstClockTime timea, GstClockTime timeb,
 						   GstClockTime time,
 						   gfloat exp) {
-  
-  const gfloat alpha = clamp((float)(time - timea) / (timeb - timea), 0.0f, 1.0f);
+
+  const GstClockTime timeclamp = MIN(timeb, MAX(timea, time));
+  const gfloat alpha = (float)(timeclamp - timea) / (timeb - timea);
   return a + (b-a) * powf(alpha, exp);
+}
+
+static inline v4sf plerp4(v4sf a, v4sf b, v4ui timea, v4ui timeb, v4ui time, v4sf exp) {
+  const v4ui clamptime = clamp4ui(time, timea, timeb);
+  const v4sf alpha = 
+    __builtin_convertvector(clamptime - timea, v4sf) / __builtin_convertvector(timeb - timea, v4sf);
+  
+  return bitselect4f(timea == timeb, b, a + (b-a) * pow4f(alpha, exp));
 }
 
 static inline gfloat func_reset(GstBtAdsr* const self, const GstClockTime ts) {
@@ -95,8 +116,31 @@ static inline gfloat func_sustain(GstBtAdsr* const self) {
 }
 
 static inline gfloat func_release(GstBtAdsr* const self, const GstClockTime ts) {
-//  printf("%f %ld %ld %f\n", self->off_level, self->ts_release, ts, plerp(self->off_level, 0.0, self->ts_release, self->ts_off_end, ts, self->release_pow));
   return plerp(self->off_level, 0.0, self->ts_release, self->ts_off_end, ts, self->release_pow);
+}
+
+static inline v4sf func_reset4(const GstBtAdsr* const self, const v4ui ts) {
+  return plerp4(self->on_level * V4SF_UNIT, V4SF_ZERO, self->ts_trigger4, self->ts_zero_end4,
+                ts, V4SF_UNIT);
+}
+
+static inline v4sf func_attack4(const GstBtAdsr* const self, const v4ui ts) {
+  return plerp4(V4SF_ZERO, self->attack_level * V4SF_UNIT, self->ts_zero_end4,
+                self->ts_attack_end4, ts, self->attack_pow * V4SF_UNIT);
+}
+
+static inline v4sf func_decay4(const GstBtAdsr* const self, const v4ui ts) {
+  return plerp4(self->attack_level * V4SF_UNIT, self->sustain_level * V4SF_UNIT, self->ts_attack_end4,
+                self->ts_decay_end4, ts, self->decay_pow * V4SF_UNIT);
+}
+
+static inline v4sf func_sustain4(const GstBtAdsr* const self) {
+  return self->sustain_level * V4SF_UNIT;
+}
+
+static inline v4sf func_release4(const GstBtAdsr* const self, const v4ui ts) {
+  return plerp4(self->off_level * V4SF_UNIT, V4SF_ZERO, self->ts_release4, self->ts_off_end4, ts,
+                self->release_pow * V4SF_UNIT);
 }
 
 static inline gfloat get_value_inline(GstBtAdsr* const self, const GstClockTime ts) {
@@ -119,35 +163,72 @@ static inline gfloat get_value_inline(GstBtAdsr* const self, const GstClockTime 
 	ts);
 }
 
+static inline v4sf get_value_inline4(const GstBtAdsr* const self, const v4ui ts) {
+  return ab_select4(
+	func_reset4(self, ts),
+	ab_select4(
+	  func_attack4(self, ts),
+	  ab_select4(
+		func_decay4(self, ts),
+		ab_select4(
+		  func_sustain4(self),
+		  func_release4(self, ts),
+		  self->ts_release4,
+		  ts),
+		self->ts_decay_end4,
+		ts),
+	  self->ts_attack_end4,
+	  ts),
+	self->ts_zero_end4,
+	ts);
+}
+
 static gboolean get_value(GstControlSource* self, GstClockTime timestamp, gdouble* value) {
   *value = get_value_inline((GstBtAdsr*)self, timestamp);
   return TRUE;
 }
 
-static gboolean get_value_array(GstControlSource* self, GstClockTime timestamp, GstClockTime interval,
+gboolean gstbt_adsr_get_value_array_f(GstBtPropSrateControlSource* super, GstClockTime timestamp, GstClockTime interval,
+                                      guint n_values, gfloat* values) {
+  g_assert(n_values % 4 == 0);
+  
+  GstBtAdsr* self = (GstBtAdsr*)super;
+
+  if (timestamp > self->ts_off_end || timestamp < self->ts_trigger)
+    return FALSE;
+
+  const v4ui inc = {0,1,2,3};
+  v4ui inc2 = {4,3,2,1};
+  const guint uint_interval = (guint)(interval/1e2L);
+  inc2 *= uint_interval;
+  
+  v4si accum = V4SI_ZERO;
+  v4sf* const values4 = (v4sf*)values;
+  v4ui ts = (guint)((timestamp - self->ts_trigger)/1e2L) + inc * uint_interval;
+  for (guint i = 0; i < n_values/4; ++i) {
+	values4[i] = get_value_inline4(self, ts);
+	accum = (accum != V4SI_ZERO) | (values4[i] != V4SF_ZERO);
+	ts += inc2;
+  }
+
+  return !v4si_eq(accum, V4SI_ZERO);
+}
+
+static gboolean get_value_array(GstControlSource* super, GstClockTime timestamp, GstClockTime interval,
 								guint n_values, gdouble* values) {
   for (guint i = 0; i < n_values; ++i) {
-	values[i] = get_value_inline((GstBtAdsr*)self, timestamp);
+    v4sf fval;
+	gstbt_adsr_get_value_array_f((GstBtPropSrateControlSource*)super, timestamp, 0, 4, (float*)&fval);
+    values[i] = fval[0];
 	timestamp += interval;
   }
   return TRUE;
 }
 
 void gstbt_adsr_get_value_f(GstBtPropSrateControlSource* super, GstClockTime timestamp, gfloat* value) {
-  GstBtAdsr* self = (GstBtAdsr*)super;
-  *value = get_value_inline(self, timestamp);
-}
-
-gboolean gstbt_adsr_get_value_array_f(GstBtPropSrateControlSource* super, GstClockTime timestamp, GstClockTime interval,
-                                      guint n_values, gfloat* values) {
-  GstBtAdsr* self = (GstBtAdsr*)super;
-  guint accum = 0;
-  for (guint i = 0; i < n_values; ++i) {
-	values[i] = get_value_inline(self, timestamp);
-	accum = accum != 0 || values[i] != 0;
-	timestamp += interval;
-  }
-  return accum != 0;
+  v4sf fval;
+  gstbt_adsr_get_value_array_f(super, timestamp, 0, 4, (float*)&fval);
+  *value = fval[0];
 }
 
 gboolean gstbt_adsr_property_set(GObject* obj, guint prop_id, const GValue* value, GParamSpec* pspec) {
@@ -250,20 +331,32 @@ void gstbt_adsr_trigger(GstBtAdsr* const self, const GstClockTime time) {
 	gstbt_adsr_get_value_f((GstBtPropSrateControlSource*)self, time, &self->on_level);
 	self->ts_zero_end = time + (GstClockTime)(self->on_level * 0.05 * GST_SECOND);
   }
+  self->ts_zero_end4 = (guint)((self->ts_zero_end - time)/1e2L) * V4UI_UNIT;
   
   self->ts_trigger = time;
+  self->ts_trigger4 = V4UI_ZERO;
   self->ts_attack_end = self->ts_zero_end + (GstClockTime)(self->attack_secs * GST_SECOND);
+  self->ts_attack_end4 = (guint)((self->ts_attack_end - self->ts_trigger)/1e2L) * V4UI_UNIT;
   self->ts_decay_end = self->ts_attack_end + (GstClockTime)(self->decay_secs * GST_SECOND);
+  self->ts_decay_end4 = (guint)((self->ts_decay_end - self->ts_trigger)/1e2L) * V4UI_UNIT;
   self->ts_release = ULONG_MAX;
+  self->ts_release4 = V4UI_TRUE;
   self->ts_off_end = ULONG_MAX;
+  self->ts_off_end4 = V4UI_TRUE;
 }
 
 void gstbt_adsr_off(GstBtAdsr* const self, const GstClockTime time) {
   gstbt_adsr_get_value_f((GstBtPropSrateControlSource*)self, time, &self->off_level);
+  self->ts_zero_end = MIN(self->ts_zero_end, time);
+  self->ts_zero_end4 = (guint)((self->ts_zero_end - self->ts_trigger)/1e2L) * V4UI_UNIT;
   self->ts_attack_end = MIN(self->ts_attack_end, time);
+  self->ts_attack_end4 = (guint)((self->ts_attack_end - self->ts_trigger)/1e2L) * V4UI_UNIT;
   self->ts_decay_end = MIN(self->ts_decay_end, time);
+  self->ts_decay_end4 = (guint)((self->ts_decay_end - self->ts_trigger)/1e2L) * V4UI_UNIT;
   self->ts_release = time;
+  self->ts_release4 = (guint)((self->ts_release - self->ts_trigger)/1e2L) * V4UI_UNIT;
   self->ts_off_end = self->ts_release + (GstClockTime)(self->release_secs * GST_SECOND);
+  self->ts_off_end4 = (guint)((self->ts_off_end - self->ts_trigger)/1e2L) * V4UI_UNIT;
 }
 
 void prop_add(GstBtAdsr* const self, const char* name, void* var) {

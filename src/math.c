@@ -271,9 +271,10 @@ v4sf log4f(v4sf x)
 }
 
 void math_test(void) {
-  g_assert(v4sf_eq(ldexp4f(V4SF_UNIT, V4SI_UNIT * -127), V4SF_UNIT * 1.0e-30f));
-  g_assert(v4sf_eq(ldexp4f(V4SF_UNIT, V4SI_UNIT * -128), V4SF_UNIT * 1.0e-30f));
-  g_assert(v4sf_eq(ldexp4f(V4SF_UNIT, V4SI_UNIT * 128), V4SF_UNIT * 1.0e+30f));
+  g_assert(v4sf_eq(ldexp4f(V4SF_UNIT, V4SI_UNIT * -127), (v4sf)((v4si)V4SF_UNIT & V4UI_FLOAT_INV_EXPONENT)));
+  g_assert(v4sf_eq(ldexp4f(V4SF_UNIT, V4SI_UNIT * -128), (v4sf)((v4si)V4SF_UNIT & V4UI_FLOAT_INV_EXPONENT)));
+  g_assert(v4sf_eq(ldexp4f(V4SF_UNIT, V4SI_UNIT * 128),
+                   (v4sf)(((v4si)V4SF_UNIT & V4UI_FLOAT_INV_EXPONENT) | ((254<<23) * V4SI_UNIT))));
 	
   g_assert(v4sf_eq(withsignbit4f(V4SF_UNIT, V4SI_TRUE), -V4SF_UNIT));
   g_assert(v4sf_eq(withsignbit4f(-V4SF_UNIT, V4SI_TRUE), -V4SF_UNIT));
@@ -291,10 +292,6 @@ void math_test(void) {
     v4sf input = {-1.0f, 0.0f, 3.0f, 2.0f};
     v4sf expected = {0.5f, 1.0f, 8.0f, 4.0f};
     v4sf result = pow4f(2 * V4SF_UNIT, input);
-    for (int i = 0; i < 4; ++i) {
-      printf("%x %x %x\n", ((v4si)input)[i], ((v4si)result)[i], ((v4si)expected)[i]);
-      printf("%.20f %.20f %.20f\n", input[i], result[i], expected[i]);
-    }
     g_assert(v4sf_eq(result, expected));
   }
 
@@ -302,10 +299,6 @@ void math_test(void) {
     v4sf input = {-1.5f, 0.0f, 3.0f, 2.0f};
     v4sf expected = {-0.5f, 1.0f, -8.0f, 4.0f};
     v4sf result = pow4f(-2 * V4SF_UNIT, input);
-    for (int i = 0; i < 4; ++i) {
-      printf("%x %x %x\n", ((v4si)input)[i], ((v4si)result)[i], ((v4si)expected)[i]);
-      printf("%.20f %.20f %.20f\n", input[i], result[i], expected[i]);
-    }
     g_assert(v4sf_eq(result, expected));
   }
   
@@ -348,10 +341,6 @@ void math_test(void) {
     v4si inputb = {0, 1, 2, -3};
     v4sf expected = {1.0f, -4.0f, 0.0f, -0.5f};
     v4sf result = ldexp4f(inputa, inputb);
-    for (int i = 0; i < 4; ++i) {
-      //printf("%x %x %x\n", ((v4si)input)[i], ((v4si)result)[i], ((v4si)expected)[i]);
-      printf("%.20f %d %.20f %.20f\n", inputa[i], inputb[i], result[i], expected[i]);
-    }
     g_assert(v4sf_eq(result, expected));
   }
 }

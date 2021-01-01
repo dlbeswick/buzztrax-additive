@@ -102,22 +102,61 @@ static inline gboolean v4si_eq(v4si a, v4si b) {
   return a[0] == b[0] && a[1] == b[1] && a[2] == b[2] && a[3] == b[3];
 }
 
-static inline v4sf max4f(v4sf a, v4sf b) {
-  return bitselect4f(a > b, a, b);
+static inline v4ui min4ui(v4ui a, v4ui b) {
+  v4ui result;
+  for (int i = 0; i < 4; ++i)
+    result[i] = a[i] < b[i] ? a[i] : b[i];
+  return result;
+}
+
+static inline v4ui max4ui(v4ui a, v4ui b) {
+  v4ui result;
+  for (int i = 0; i < 4; ++i)
+    result[i] = a[i] > b[i] ? a[i] : b[i];
+  return result;
+}
+
+static inline v4ui clamp4ui(v4ui x, v4ui min, v4ui max) {
+  // The compiler will vectorize this appropriately (no min/max for integers in SSE2)
+  return min4ui(max, max4ui(x, min));
+}
+
+static inline v4si min4i(v4si a, v4si b) {
+  v4si result;
+  for (int i = 0; i < 4; ++i)
+    result[i] = a[i] < b[i] ? a[i] : b[i];
+  return result;
+}
+
+static inline v4si max4i(v4si a, v4si b) {
+  v4si result;
+  for (int i = 0; i < 4; ++i)
+    result[i] = a[i] > b[i] ? a[i] : b[i];
+  return result;
+}
+
+static inline v4si clamp4i(v4si x, v4si min, v4si max) {
+  // The compiler will vectorize this appropriately (no min/max for integers in SSE2)
+  return min4i(max, max4i(x, min));
 }
 
 static inline v4sf min4f(v4sf a, v4sf b) {
-  return bitselect4f(a < b, a, b);
+  v4sf result;
+  for (int i = 0; i < 4; ++i)
+    result[i] = a[i] < b[i] ? a[i] : b[i];
+  return result;
 }
 
-static inline gfloat clamp(gfloat x, gfloat min, gfloat max) {
-  const gfloat result = bitselect_f(x < min, min, x);
-  return bitselect_f(result > max, max, result);
+static inline v4sf max4f(v4sf a, v4sf b) {
+  v4sf result;
+  for (int i = 0; i < 4; ++i)
+    result[i] = a[i] > b[i] ? a[i] : b[i];
+  return result;
 }
 
 static inline v4sf clamp4f(v4sf x, v4sf min, v4sf max) {
-  const v4sf result = bitselect4f(x < min, min, x);
-  return bitselect4f(result > max, max, result);
+  // The compiler will vectorize this appropriately with minps/maxps instrunctions
+  return min4f(max, max4f(x, min));
 }
 
 static inline gfloat lerp(const gfloat a, const gfloat b, const gfloat alpha) {
@@ -179,32 +218,24 @@ static inline v4sf frexp4f(v4sf f, v4si* exp) {
 
 // Multiply x by 2**n.
 // Adapted from glibc.
-// Returns 0 for denormal numbers.
+// Returns 0 for denormal numbers or exponent underflow.
+// Returns the input number with exponent 254 in case of exponent overflow.
+//
 // Basically, mask and shift to extract the exponent, add 'n' to it, and mask and shift it back in while checking for
 // over/underflow of the exponent.
 static inline v4sf ldexp4f(v4sf x, v4si n) {
   v4si ix = (v4si)x;
   v4si k = (ix & V4UI_FLOAT_EXPONENT) >> 23;		/* extract exponent */
 
-  /* Assuming k and n are bounded such that k = k+n does not overflow. */
-
-  v4si newk = k+n;
+  v4si newk = clamp4i(k+n, V4SI_ZERO, 254 * V4SI_UNIT);
+  
   // Clear exponent and insert k as the new exponent.
   ix = (ix & V4UI_FLOAT_INV_EXPONENT) | (newk<<23);
 
-  //intf("!@# %d %d %d\n", k[0], n[0], newk[0]);
   return bitselect4f(
 	k == 0, // When k == 0, then x is denormal or zero. Must check original k as 0**x == 0.
 	V4SF_ZERO,
-	bitselect4f(
-	  newk <= 0,
-	  copysign4f(V4SF_UNIT * 1.0e-30f, x),
-	  bitselect4f(
-		newk > 254,
-		copysign4f(V4SF_UNIT * 1.0e+30f, x),
-		(v4sf)ix
-		)
-	  )
+    (v4sf)ix
 	);
 }
 
