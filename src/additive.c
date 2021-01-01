@@ -486,12 +486,12 @@ static void fill_buffer_internal(GstBtAdditive* const self, StateVirtualVoice* c
       v4sf amp_boost = srate_amp_boost_db[i];
 	  
 	  if (!v4sf_eq(amp_boost, V4SF_ZERO)) {
-        amp_boost *= pow4f_method(window_sharp_cosine4(
-									freq_overtone,
-									srate_amp_boost_center[i],
-									22050,
-									srate_amp_boost_sharpness[i]),
-								  srate_amp_boost_exp[i]);
+        amp_boost *= powpnz4f(window_sharp_cosine4(
+                                freq_overtone,
+                                srate_amp_boost_center[i],
+                                22050,
+                                srate_amp_boost_sharpness[i]),
+                              srate_amp_boost_exp[i]+FLT_MIN);
 	  }
 
 	  const v4sf hscale_amp =
@@ -517,8 +517,9 @@ static void fill_buffer_internal(GstBtAdditive* const self, StateVirtualVoice* c
       v4sf sample_l;
       v4sf sample_r;
 	  if (!v4sf_eq(srate_ringmod_rate[i], V4SF_ZERO)) {
-		sample_l = sample * powsin4f(f_rm, srate_ringmod_rate[i]);
-		sample_r = sample * powsin4f(f_rm+F2PI*srate_stereo[i], srate_ringmod_rate[i]);
+        // Avoid zero input to powpnz here by adding FLT_MIN
+		sample_l = sample * powpnzsin4f(f_rm, srate_ringmod_rate[i]+FLT_MIN);
+		sample_r = sample * powpnzsin4f(f_rm+F2PI*srate_stereo[i], srate_ringmod_rate[i]+FLT_MIN);
       } else {
         sample_l = sample;
         sample_r = sample;

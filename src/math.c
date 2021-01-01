@@ -228,14 +228,11 @@ v4sf exp4f(v4sf x)
 
 v4sf log4f(v4sf x)
 {
-/* Test for domain */
-  const v4si out_of_domain = x <= 0;
+  return bitselect4f(x <= 0, MINLOGF, logpnz4f(x));
+}
 
-  if (v4si_eq(out_of_domain, V4SI_TRUE))
-	return MINLOGF;
-  
-  x = bitselect4f(out_of_domain, MINLOGF, x);
-
+v4sf logpnz4f(v4sf x)
+{
   v4si e;
   x = frexp4f(x, &e);
 
@@ -265,9 +262,7 @@ v4sf log4f(v4sf x)
   y += -0.5f * z;  /* y - 0.5 x^2 */
   z = x + y;   /* ... + x  */
 
-  z = bitselect4f(e_ne_0, z + 0.693359375f * fe, z);
-
-  return z;
+  return bitselect4f(e_ne_0, z + 0.693359375f * fe, z);
 }
 
 void math_test(void) {

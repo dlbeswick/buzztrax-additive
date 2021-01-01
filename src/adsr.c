@@ -92,11 +92,12 @@ static inline gfloat plerp(gfloat a, gfloat b,
 }
 
 static inline v4sf plerp4(v4sf a, v4sf b, v4ui timea, v4ui timeb, v4ui time, v4sf exp) {
-  const v4ui clamptime = clamp4ui(time, timea, timeb);
+  // +1 here to avoid zero inputs to powpnz4f
+  const v4ui clamptime = clamp4ui(time, timea+1, timeb);
   const v4sf alpha = 
     __builtin_convertvector(clamptime - timea, v4sf) / __builtin_convertvector(timeb - timea, v4sf);
   
-  return bitselect4f(timea == timeb, b, a + (b-a) * pow4f(alpha, exp));
+  return bitselect4f(timea == timeb, b, a + (b-a) * powpnz4f(alpha, exp));
 }
 
 static inline gfloat func_reset(GstBtAdsr* const self, const GstClockTime ts) {

@@ -282,6 +282,9 @@ static inline v4sf tan4f(v4sf x) {
 
 v4sf log4f(v4sf x);
 
+// Positive, non-zero arguments only.
+v4sf logpnz4f(v4sf x);
+
 // Domain checks removed: -103.278929903431851103 < x < 88.72283905206835
 // This function will return incorrect values for denormal numbers.
 v4sf exp4f(v4sf x);
@@ -289,6 +292,11 @@ v4sf exp4f(v4sf x);
 // Returns zero if base is negative and exponent is not an integer.
 // No mathematical basis to this; it just helps simplify the use of real parameters as exponents.
 v4sf pow4f(v4sf base, v4sf exponent);
+
+// Positive, non-zero bases only.
+static inline v4sf powpnz4f(const v4sf base, const v4sf exponent) {
+  return exp4f(exponent*logpnz4f(base));
+}
 
 static inline v4sf sin4f_method(const v4sf x) {
   return sin4f(x);
@@ -309,6 +317,10 @@ static inline v4sf pow4f_method(const v4sf x, const v4sf vexp) {
 // A way of waveshaping using non-odd powers?
 static inline v4sf powsin4f(const v4sf x, const v4sf vexp) {
   return (pow4f_method(sin014f(x), vexp) - 0.5f) * 2.0f;
+}
+
+static inline v4sf powpnzsin4f(const v4sf x, const v4sf vexp) {
+  return (powpnz4f(sin014f(x), vexp) - 0.5f) * 2.0f;
 }
 
 // A cosine window whose slope can be controlled with a "sharpness" value.

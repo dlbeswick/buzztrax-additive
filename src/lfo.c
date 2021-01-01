@@ -57,7 +57,7 @@ static GParamSpec* properties[GSTBT_LFO_FLOAT_PROP_N] = { NULL, };
 static v4sf get_shape(const v4sf waveform, const v4sf shape) {
   return bitselect4f(
     waveform == GSTBT_LFO_FLOAT_WAVEFORM_SINE,
-	pow4f(shape+0.5f, 8 * V4SF_UNIT),
+	powpnz4f(shape+0.5f, 8 * V4SF_UNIT),
 	shape
     );
 }
@@ -69,7 +69,7 @@ static inline v4sf get_sample(const v4sf waveform, const v4sf accum_unbounded, c
   
   return bitselect4f(
     waveform == GSTBT_LFO_FLOAT_WAVEFORM_SINE,
-	powsin4f(accum * F2PI, shape),
+	powpnzsin4f(accum * F2PI, shape),
     bitselect4f(
       waveform == GSTBT_LFO_FLOAT_WAVEFORM_SQUARE,
       bitselect4f(accum < shape, -V4SF_UNIT, V4SF_UNIT),
