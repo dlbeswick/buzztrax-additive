@@ -63,31 +63,20 @@ static v4sf get_shape(const v4sf waveform, const v4sf shape) {
 }
 
 // 0 <= accum < get_accum_period()
-static inline v4sf get_sample(const v4sf waveform, const v4sf accum_unbounded, const v4sf shape) {
+static inline v4sf get_sample(const guint waveform, const v4sf accum_unbounded, const v4sf shape) {
   // accum % 1.0 (period)
   v4sf accum = accum_unbounded - floor4f(accum_unbounded);
   
-  return bitselect4f(
-    waveform == GSTBT_LFO_FLOAT_WAVEFORM_SINE,
-	powpnzsin4f(accum * F2PI, shape),
-    bitselect4f(
-      waveform == GSTBT_LFO_FLOAT_WAVEFORM_SQUARE,
-      bitselect4f(accum < shape, -V4SF_UNIT, V4SF_UNIT),
-      bitselect4f(
-        waveform == GSTBT_LFO_FLOAT_WAVEFORM_SAW,
-        bitselect4f(
-          shape == 1.0f,
-          V4SF_ZERO,
-          bitselect4f(
-            shape == 0.0f,
-            V4SF_UNIT,
-            max4f(-V4SF_UNIT, -1 + (1 - ((1-accum) * tan4f(FPI/2*shape))) * 2)
-            )
-          ),
-        V4SF_ZERO // default
-        )
-      )
-    );
+  switch (waveform) {
+  case GSTBT_LFO_FLOAT_WAVEFORM_SINE:
+	return powpnzsin4f(accum * F2PI, shape);
+  case GSTBT_LFO_FLOAT_WAVEFORM_SQUARE:
+    return bitselect4f(accum < shape, -V4SF_UNIT, V4SF_UNIT);
+  case GSTBT_LFO_FLOAT_WAVEFORM_SAW:
+    return max4f(-V4SF_UNIT, -1 + (1 - ((1-accum) * tan4f(FPI/2*(FLT_MIN+shape*(1-FLT_MIN*2))))) * 2);
+  default:
+    return V4SF_ZERO;
+  }
 }
 
 static void srate_props_fill(GstBtLfoFloat* const self, const GstClockTime timestamp, const GstClockTime interval,
@@ -162,6 +151,7 @@ static gboolean mod_value_array_accum(GstBtLfoFloat* self, GstClockTime timestam
   accum4[0] = self->accum;
 
   const v4sf inc_base = (gfloat)interval/GST_SECOND * period;
+  const guint waveform = srate_waveform[0][0];
   
   for (guint i = 0; i < n_values/4; ++i) {
     const v4sf inc = inc_base * srate_frequency[i];
@@ -174,7 +164,7 @@ static gboolean mod_value_array_accum(GstBtLfoFloat* self, GstClockTime timestam
   
 	const v4sf val =
       (srate_offset[i] +
-       get_sample(srate_waveform[i],
+       get_sample(waveform,
                   accum4 + srate_phase[i],
                   get_shape(srate_waveform[i], srate_shape[i]))) *
       srate_amplitude[i];
