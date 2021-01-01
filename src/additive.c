@@ -692,6 +692,8 @@ static void gstbt_additive_init(GstBtAdditive* const self) {
 
     self->voices[i] = voice;
   }
+
+  self->n_virtual_voices = 1;
 }
 
 static void _dispose (GObject* object) {

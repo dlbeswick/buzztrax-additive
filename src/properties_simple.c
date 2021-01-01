@@ -17,6 +17,7 @@
 */
 
 #include "properties_simple.h"
+#include "debug.h"
 #include <stdio.h>
 
 struct _BtPropertiesSimpleClass {
@@ -113,19 +114,22 @@ void bt_properties_simple_add(BtPropertiesSimple* self, const char* prop_name, v
   g_array_append_val(self->props, pspec_var);
 }
 
+void bt_properties_simple_finalize(GObject* const obj) {
+  BtPropertiesSimple* const self = (BtPropertiesSimple*)obj;
+  g_array_free(self->props, TRUE);
+  G_OBJECT_CLASS(bt_properties_simple_parent_class)->finalize(obj);
+}
+
 void bt_properties_simple_dispose(GObject* const obj) {
   BtPropertiesSimple* const self = (BtPropertiesSimple*)obj;
-  for (guint i = 0; i < self->props->len; ++i) {
-	PspecVar* const pspec_var = &g_array_index(self->props, PspecVar, i);
-	g_clear_object(&pspec_var->pspec);
-  }
-  g_array_unref(self->props);
-  self->props = NULL;
+  g_clear_object(&self->owner);
+  G_OBJECT_CLASS(bt_properties_simple_parent_class)->dispose(obj);
 }
 
 void bt_properties_simple_class_init(BtPropertiesSimpleClass* const klass) {
   GObjectClass* const gobject_class = (GObjectClass*)klass;
   gobject_class->dispose = bt_properties_simple_dispose;
+  gobject_class->finalize = bt_properties_simple_finalize;
 }
 
 void bt_properties_simple_init(BtPropertiesSimple* const self) {
@@ -134,6 +138,6 @@ void bt_properties_simple_init(BtPropertiesSimple* const self) {
 
 BtPropertiesSimple* bt_properties_simple_new(GObject* owner) {
   BtPropertiesSimple* const self = (BtPropertiesSimple*)g_object_new(bt_properties_simple_get_type(), NULL);
-  self->owner = owner;
+  self->owner = g_object_ref(owner);
   return self;
 }
