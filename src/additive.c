@@ -201,7 +201,6 @@ static void _set_property (GObject * object, guint prop_id, const GValue * value
       self->note = note;
       vvoice->note = note;
       for (guint i = 0; i < self->n_voices; ++i) {
-        gstbt_additivev_copy(self->voices[i], vvoice->voices[i]);
         gstbt_additivev_note_on(vvoice->voices[i], self->parent.running_time);
       }
     }
@@ -592,6 +591,10 @@ static gboolean process(GstBtAudioSynth* synth, GstBuffer* gstbuf, GstMapInfo* i
   if (self->nsamples_available == 0 && to_copy != 0) {
     for (int i = 0; i < self->n_voices; ++i) {
       gstbt_additivev_process(self->voices[i], gstbuf);
+      for (guint j = 0; j < self->n_virtual_voices; ++j) {
+        // tbd: this doesn't have to happen. The virtual voice LFOs and ADSRs could read directly from the parameters.
+        gstbt_additivev_copy(self->voices[i], self->virtual_voices[j].voices[i]);
+      }
     }
 
     self->nsamples_available = self->buf_samples;
