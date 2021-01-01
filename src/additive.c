@@ -198,12 +198,10 @@ static void _set_property (GObject * object, guint prop_id, const GValue * value
         gstbt_additivev_note_off(vvoice->voices[i], self->parent.running_time);
       }
     } else if (note != GSTBT_NOTE_NONE) {
-      GST_INFO("%d", self->release_on_note); 
       if (self->n_virtual_voices > 1 && self->release_on_note) {
         const guint idx_last_virtual_voice =
           ((self->idx_next_virtual_voice - 1) + self->n_virtual_voices) % self->n_virtual_voices;
         
-        GST_INFO("RELEASE %d", idx_last_virtual_voice); 
         StateVirtualVoice* vvoice = &self->virtual_voices[idx_last_virtual_voice];
         for (guint i = 0; i < self->n_voices; ++i) {
           gstbt_additivev_note_off(vvoice->voices[i], self->parent.running_time);
@@ -211,7 +209,6 @@ static void _set_property (GObject * object, guint prop_id, const GValue * value
       }
       
       StateVirtualVoice* vvoice = &self->virtual_voices[self->idx_next_virtual_voice];
-      GST_INFO("ON %d", self->idx_next_virtual_voice); 
       self->idx_next_virtual_voice = (self->idx_next_virtual_voice + 1) % self->n_virtual_voices;
     
       self->note = note;

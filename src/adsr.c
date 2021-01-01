@@ -312,7 +312,6 @@ void gstbt_adsr_trigger(GstBtAdsr* const self, const GstClockTime time) {
 	self->ts_zero_end = self->ts_trigger;
   } else {
     self->on_level = onlevel;
-    GST_INFO("ONLEVEL %f", self->on_level);
 	self->ts_zero_end = self->ts_trigger + (GstClockTime)(self->on_level * 0.05 * GST_SECOND);
   }
   self->ts_zero_end4 = (guint)((self->ts_zero_end - time)/1e2L) * V4UI_UNIT;
@@ -329,7 +328,6 @@ void gstbt_adsr_trigger(GstBtAdsr* const self, const GstClockTime time) {
   self->released = FALSE;
   
   if (self->auto_release) {
-    GST_INFO("AUTORELEASE %ld", self->ts_decay_end);
     gstbt_adsr_off(self, self->ts_decay_end);
   }
 }
