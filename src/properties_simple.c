@@ -42,6 +42,9 @@ gboolean bt_properties_simple_get(const BtPropertiesSimple* self, GParamSpec* ps
 	
 	if (pspec_var->pspec->name == pspec->name) {
 	  switch (pspec_var->pspec->value_type) {
+	  case G_TYPE_BOOLEAN:
+		g_value_set_boolean(value, *(gboolean*)pspec_var->var);
+		break;
 	  case G_TYPE_INT:
 		g_value_set_int(value, *(gint*)pspec_var->var);
 		break;
@@ -72,6 +75,9 @@ gboolean bt_properties_simple_set(const BtPropertiesSimple* self, GParamSpec* ps
 	
 	if (pspec_var->pspec == pspec) {
 	  switch (pspec_var->pspec->value_type) {
+	  case G_TYPE_BOOLEAN:
+		(*(gboolean*)pspec_var->var) = g_value_get_boolean(value);
+        break;
 	  case G_TYPE_INT:
 		(*(gint*)pspec_var->var) = g_value_get_int(value);
 		break;

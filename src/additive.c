@@ -90,6 +90,7 @@ typedef struct {
   gfloat ringmod_depth;
   gfloat ringmod_ot_offset;
   gfloat stereo;
+  gboolean release_on_note;
   gfloat vol;
   GstBtNote note;
   
@@ -119,6 +120,7 @@ typedef struct {
 enum {
   PROP_CHILDREN = N_PROPERTIES_SRATE,
   PROP_OVERTONES,
+  PROP_RELEASE_ON_NOTE,
   PROP_NOTE,
   N_PROPERTIES
 };
@@ -141,8 +143,6 @@ static guint child_proxy_get_children_count (GstChildProxy *child_proxy) {
 
 static void child_proxy_interface_init (gpointer g_iface, gpointer iface_data) {
   GstChildProxyInterface* iface = (GstChildProxyInterface*)g_iface;
-
-  GST_INFO("initializing iface");
 
   iface->get_child_by_index = child_proxy_get_child_by_index;
   iface->get_children_count = child_proxy_get_children_count;
@@ -188,14 +188,30 @@ static void _set_property (GObject * object, guint prop_id, const GValue * value
   case PROP_NOTE: {
     GstBtNote note = g_value_get_enum(value);
     if (note == GSTBT_NOTE_OFF) {
-      // fix
-      const guint idx_last_virtual_voice = (self->idx_next_virtual_voice - 1) % self->n_virtual_voices;
+      guint idx_last_virtual_voice =
+        self->n_virtual_voices > 1 ?
+        ((self->idx_next_virtual_voice - 1) + self->n_virtual_voices) % self->n_virtual_voices :
+        0;
+      
       StateVirtualVoice* vvoice = &self->virtual_voices[idx_last_virtual_voice];
       for (guint i = 0; i < self->n_voices; ++i) {
         gstbt_additivev_note_off(vvoice->voices[i], self->parent.running_time);
       }
     } else if (note != GSTBT_NOTE_NONE) {
+      GST_INFO("%d", self->release_on_note); 
+      if (self->n_virtual_voices > 1 && self->release_on_note) {
+        const guint idx_last_virtual_voice =
+          ((self->idx_next_virtual_voice - 1) + self->n_virtual_voices) % self->n_virtual_voices;
+        
+        GST_INFO("RELEASE %d", idx_last_virtual_voice); 
+        StateVirtualVoice* vvoice = &self->virtual_voices[idx_last_virtual_voice];
+        for (guint i = 0; i < self->n_voices; ++i) {
+          gstbt_additivev_note_off(vvoice->voices[i], self->parent.running_time);
+        }
+      }
+      
       StateVirtualVoice* vvoice = &self->virtual_voices[self->idx_next_virtual_voice];
+      GST_INFO("ON %d", self->idx_next_virtual_voice); 
       self->idx_next_virtual_voice = (self->idx_next_virtual_voice + 1) % self->n_virtual_voices;
     
       self->note = note;
@@ -268,6 +284,9 @@ static void _set_property (GObject * object, guint prop_id, const GValue * value
   case PROP_VIRTUAL_VOICES:
     self->n_virtual_voices = g_value_get_uint(value);
     break;
+  case PROP_RELEASE_ON_NOTE:
+    self->release_on_note = g_value_get_boolean(value);
+    break;
   case PROP_VOL:
     self->vol = g_value_get_float(value);
     break;
@@ -337,6 +356,9 @@ static void _get_property (GObject * object, guint prop_id, GValue * value, GPar
     break;
   case PROP_VIRTUAL_VOICES:
     g_value_set_uint(value, self->n_virtual_voices);
+    break;
+  case PROP_RELEASE_ON_NOTE:
+    g_value_set_boolean(value, self->release_on_note);
     break;
   case PROP_VOL:
     g_value_set_float(value, self->vol);
@@ -761,6 +783,8 @@ G_DIR_SEPARATOR_S "" PACKAGE "-gst" G_DIR_SEPARATOR_S "GstBtSimSyn.html");*/
     g_param_spec_float("stereo", "Stereo", "Stereo Width", 0, 1, 0.5, flags);
   properties[PROP_VIRTUAL_VOICES] =
     g_param_spec_uint("virtual-voices", "Virt. Voice", "Virtual Voices", 1, MAX_VIRTUAL_VOICES, 1, flags);
+  properties[PROP_RELEASE_ON_NOTE] =
+    g_param_spec_boolean("release-on-note", "Rel On Note", "Release on each note", TRUE, flags);
   properties[PROP_VOL] =
     g_param_spec_float("vol", "Vol", "Volume", 0, 1, 0.5, flags);
   properties[PROP_NOTE] =
