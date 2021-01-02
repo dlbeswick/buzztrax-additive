@@ -110,7 +110,6 @@ typedef struct {
   guint buf_samples;
   guint nsamples_available;
   gfloat* buf;
-  gfloat* buf_vvoice;
 
   gint calls;
   long time_accum;
@@ -426,6 +425,7 @@ static void srate_props_fill(GstBtAdditive* const self, StateVirtualVoice* const
       );
   }
 
+  // Anything that can be done here will save it being done per-overtone.
   // Calculate values that differ from the initial value set in the property.
   {
     gfloat* const srate = srate_prop_buf_get(self, vvoice, PROP_AMP_BOOST_DB);
@@ -455,10 +455,10 @@ static gboolean is_machine_silent(const GstBtAdditive* const self, const StateVi
 }
 
 static void fill_buffer_internal(GstBtAdditive* const self, StateVirtualVoice* const vvoice, GstBuffer* gstbuf,
-                                 int nframes) {
+                                 v4sf* const buffer, int nframes) {
   g_assert(nframes*2 % 4 == 0);
 
-  memset(self->buf_vvoice, 0, self->nsamples_available*sizeof(typeof(*self->buf_vvoice)));
+  memset(buffer, 0, nframes/4*2*sizeof(typeof(*buffer)));
   
   const gfloat rate = self->parent.info.rate;
   const gfloat secs_per_sample = 1.0f / rate;
@@ -499,7 +499,7 @@ static void fill_buffer_internal(GstBtAdditive* const self, StateVirtualVoice* c
 	v4sf f = overtone->accum_rads * V4SF_UNIT;
 	v4sf f_rm = overtone->accum_rm_rads * V4SF_UNIT;
 
-    v4sf* buf4 = (v4sf*)self->buf_vvoice;
+    v4sf* buf4 = buffer;
     for (int i = 0; i < n4frames; ++i) {
       const v4sf hscale_freq = srate_ampfreq_scale_idx_mul[i] * (gfloat)j + srate_ampfreq_scale_offset[i];
 	  
@@ -573,7 +573,7 @@ static void fill_buffer_internal(GstBtAdditive* const self, StateVirtualVoice* c
   
   const v4sf* const vol_srate = (v4sf*)srate_prop_buf_get(self, vvoice, PROP_VOL);
 
-  v4sf* buf4 = (v4sf*)self->buf_vvoice;
+  v4sf* buf4 = buffer;
   for (guint i = 0; i < n4frames; ++i) {
     *(buf4++) *= vol_srate[i];
     *(buf4++) *= vol_srate[i];
@@ -597,7 +597,6 @@ static gboolean process(GstBtAudioSynth* synth, GstBuffer* gstbuf, GstMapInfo* i
     self->buf_samples = required_bufsamps;
     
     self->buf = g_realloc(self->buf, sizeof(typeof(*(self->buf))) * self->buf_samples);
-    self->buf_vvoice = g_realloc(self->buf_vvoice, sizeof(typeof(*(self->buf_vvoice))) * self->buf_samples);
 
     for (guint i = 0; i < MAX_VIRTUAL_VOICES; ++i) {
       self->virtual_voices[i].buf_srate_props =
@@ -635,9 +634,9 @@ static gboolean process(GstBtAudioSynth* synth, GstBuffer* gstbuf, GstMapInfo* i
     memset(self->buf, 0, self->nsamples_available*sizeof(typeof(*self->buf)));
   
     v4sf* const buf4 = (v4sf*)self->buf;
-    v4sf* const buf4_vvoice = (v4sf*)self->buf_vvoice;
+    v4sf* const buf4_vvoice = g_alloca(self->buf_samples/4 * sizeof(v4sf));
     for (guint i = 0; i < self->n_virtual_voices; ++i) {
-      fill_buffer_internal(self, &self->virtual_voices[i], gstbuf, self->buf_samples/2);
+      fill_buffer_internal(self, &self->virtual_voices[i], gstbuf, buf4_vvoice, self->buf_samples/2);
       for (guint j = 0; j < self->buf_samples/4; ++j) {
         buf4[j] += buf4_vvoice[j];
       }
@@ -711,7 +710,6 @@ static void _dispose (GObject* object) {
   GstBtAdditive* self = GSTBT_ADDITIVE(object);
   g_clear_object(&self->tones);
   g_clear_pointer(&self->buf, g_free);
-  g_clear_pointer(&self->buf_vvoice, g_free);
   for (int i = 0; i < MAX_VIRTUAL_VOICES; i++) {
     g_clear_pointer(&self->virtual_voices[i].buf_srate_props, g_free);
   }
