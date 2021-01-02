@@ -104,7 +104,6 @@ typedef struct {
   GstBtAdditiveV* voices[MAX_VOICES];
 
   gfloat ringmod_ot_offset_calc;
-  gfloat amp_boost_db_calc;
   
   GstBtToneConversion* tones;
 
@@ -254,7 +253,6 @@ static void _set_property (GObject * object, guint prop_id, const GValue * value
     break;
   case PROP_AMP_BOOST_DB:
     self->amp_boost_db = g_value_get_float(value);
-    self->amp_boost_db_calc = db_to_gain(g_value_get_float(value)) - 1;
     break;
   case PROP_RINGMOD_RATE:
     self->ringmod_rate = g_value_get_float(value);
@@ -397,6 +395,7 @@ static gboolean srate_prop_is_nonzero(const StateVirtualVoice* const self, Addit
 
 static void srate_props_fill(GstBtAdditive* const self, StateVirtualVoice* const vvoice,
                              const GstClockTime timestamp, const GstClockTime interval, const guint nframes) {
+  
   for (guint i = 1; i < N_PROPERTIES_SRATE; ++i) {
     GValue src = G_VALUE_INIT;
     g_value_init(&src, G_TYPE_FLOAT);
@@ -414,12 +413,6 @@ static void srate_props_fill(GstBtAdditive* const self, StateVirtualVoice* const
   memset(vvoice->props_srate_nonzero, 0, sizeof(vvoice->props_srate_nonzero));
   memset(vvoice->props_srate_controlled, 0, sizeof(vvoice->props_srate_controlled));
   
-  // Fill this srate buffer with the calculated db-to-gain value.
-  gfloat* const srate_amp_boost_db = srate_prop_buf_get(self, vvoice, PROP_AMP_BOOST_DB);
-  for (guint i = 0; i < nframes; ++i) {
-    srate_amp_boost_db[i] = self->amp_boost_db_calc;
-  }
-  
   for (guint i = 0; i < self->n_voices; ++i) {
     gstbt_additivev_mod_value_array_f_for_prop(
       vvoice->voices[i],
@@ -431,6 +424,24 @@ static void srate_props_fill(GstBtAdditive* const self, StateVirtualVoice* const
       vvoice->props_srate_controlled,
       vvoice->voices
       );
+  }
+
+  // Calculate values that differ from the initial value set in the property.
+  {
+    gfloat* const srate = srate_prop_buf_get(self, vvoice, PROP_AMP_BOOST_DB);
+    for (guint i = 0; i < nframes; ++i)
+      srate[i] = db_to_gain(srate[i]) - 1;
+  }
+  {
+    v4sf* const srate = (v4sf*)srate_prop_buf_get(self, vvoice, PROP_FREQ_MAX);
+    for (guint i = 0; i < nframes/4; ++i)
+      // Constant below is the solution to the equation 440*2**(-5+1*m)=22050 for m.
+      srate[i] = 440*powb24f(-5 + srate[i] * 10.64713132180759f);
+  }
+  {
+    v4sf* const srate = (v4sf*)srate_prop_buf_get(self, vvoice, PROP_AMP_BOOST_CENTER);
+    for (guint i = 0; i < nframes/4; ++i)
+      srate[i] = 440*powb24f(-5 + srate[i] * 10.64713132180759f);
   }
 }
 
@@ -749,7 +760,7 @@ G_DIR_SEPARATOR_S "" PACKAGE "-gst" G_DIR_SEPARATOR_S "GstBtSimSyn.html");*/
   properties[PROP_OVERTONES] =
     g_param_spec_uint("overtones", "Overtones", "Overtones", 0, MAX_OVERTONES, 10, flags);
   properties[PROP_FREQ_MAX] =
-    g_param_spec_float("freq-max", "Freq Max", "Freq Max", 0, 22050, 22050, flags);
+    g_param_spec_float("freq-max", "Freq Max", "Freq Max", 0, 1, 1, flags);
   properties[PROP_SUM_START_IDX] =
     g_param_spec_int("sum-start-idx", "Sum Start Idx", "Sum Start Index", -10, 25, 1, flags);
   properties[PROP_AMP_POW_BASE] =
@@ -763,7 +774,7 @@ G_DIR_SEPARATOR_S "" PACKAGE "-gst" G_DIR_SEPARATOR_S "GstBtSimSyn.html");*/
   properties[PROP_AMPFREQ_SCALE_EXP] =
     g_param_spec_float("ampfreq-scale-exp", "Ampfreq Scale Exp", "Amplitude + Frequency Scale Exponent", -10, 1, -1, flags);
   properties[PROP_AMP_BOOST_CENTER] =
-    g_param_spec_float("amp-boost-center", "AmpBoost Cntr", "AmpBoost Center", 0, 22050, 0, flags);
+    g_param_spec_float("amp-boost-center", "AmpBoost Cntr", "AmpBoost Center", 0, 1, 0, flags);
   properties[PROP_AMP_BOOST_SHARPNESS] =
     g_param_spec_float("amp-boost-sharpness", "AmpBoost Shrp", "AmpBoost Sharpness", 0, 200, 0, flags);
   properties[PROP_AMP_BOOST_EXP] =

@@ -54,14 +54,6 @@ G_DEFINE_TYPE(GstBtLfoFloat, gstbt_lfo_float, G_TYPE_OBJECT);
 
 static GParamSpec* properties[GSTBT_LFO_FLOAT_PROP_N] = { NULL, };
 
-static v4sf get_shape(const v4sf waveform, const v4sf shape) {
-  return bitselect4f(
-    waveform == GSTBT_LFO_FLOAT_WAVEFORM_SINE,
-	powpnz4f(shape+0.5f, 8 * V4SF_UNIT),
-	shape
-    );
-}
-
 // 0 <= accum < get_accum_period()
 static inline v4sf get_sample(const guint waveform, const v4sf accum_unbounded, const v4sf shape) {
   // accum % 1.0 (period)
@@ -69,11 +61,12 @@ static inline v4sf get_sample(const guint waveform, const v4sf accum_unbounded, 
   
   switch (waveform) {
   case GSTBT_LFO_FLOAT_WAVEFORM_SINE:
-	return powpnzsin4f(accum * F2PI, shape);
+	return powpnzsin4f(accum * F2PI, powpnz4f(shape+0.5f, 8 * V4SF_UNIT));
   case GSTBT_LFO_FLOAT_WAVEFORM_SQUARE:
     return bitselect4f(accum < shape, -V4SF_UNIT, V4SF_UNIT);
   case GSTBT_LFO_FLOAT_WAVEFORM_SAW:
-    return max4f(-V4SF_UNIT, -1 + (1 - ((1-accum) * tan4f(FPI/2*(FLT_MIN+shape*(1-FLT_MIN*2))))) * 2);
+    // Constant ensures that a value of 0.5 results in exponent of one. Range is 0.015 to 64.
+    return -1 + pow4f(accum, 0.5f*powb24f(-10+(shape+0.41667f)*12)) * 2;
   default:
     return V4SF_ZERO;
   }
@@ -163,10 +156,8 @@ static gboolean mod_value_array_accum(GstBtLfoFloat* self, GstClockTime timestam
     const v4sf alpha = pow4f(srate_filter[i], 8 * V4SF_UNIT);
   
 	const v4sf val =
-      (srate_offset[i] +
-       get_sample(waveform,
-                  accum4 + srate_phase[i],
-                  get_shape(srate_waveform[i], srate_shape[i]))) *
+      srate_offset[i] +
+      get_sample(waveform, accum4 + srate_phase[i], srate_shape[i]) *
       srate_amplitude[i];
 
     v4sf integrate = alpha*val;
@@ -249,7 +240,7 @@ void gstbt_lfo_float_props_add(GObjectClass* const gobject_class, guint* idx) {
   *(prop++) = g_param_spec_float("lfo-frequency", "LFO Freq", "LFO Frequency", 0, 100, 0, flags);
   *(prop++) = g_param_spec_float("lfo-shape", "LFO Shape", "LFO Shape", 0, 1, 0.5f, flags);
   *(prop++) = g_param_spec_float("lfo-filter", "LFO Filter", "LFO Filter", 0, 1, 1, flags);
-  *(prop++) = g_param_spec_float("lfo-offset", "LFO Offset", "LFO Offset", -1, 1, 0, flags);
+  *(prop++) = g_param_spec_float("lfo-offset", "LFO Offset", "LFO Offset", -2, 2, 0, flags);
   *(prop++) = g_param_spec_float("lfo-phase", "LFO Phase", "LFO Phase", -1, 1, 0, flags);
   *(prop++) = g_param_spec_enum("lfo-waveform", "LFO Wave", "LFO Waveform",
                                 gst_bt_lfo_float_waveform_get_type(), GSTBT_LFO_FLOAT_WAVEFORM_SINE, flags);

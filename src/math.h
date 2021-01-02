@@ -298,6 +298,11 @@ static inline v4sf powpnz4f(const v4sf base, const v4sf exponent) {
   return exp4f(exponent*logpnz4f(base));
 }
 
+// Power of base 2
+static inline v4sf powb24f(const v4sf exponent) {
+  return exp4f(exponent*0.6931471805599453f);
+}
+
 static inline v4sf sin4f_method(const v4sf x) {
   return sin4f(x);
   //return _ZGVbN4v_sinf(x);
