@@ -611,13 +611,16 @@ static gboolean process(GstBtAudioSynth* synth, GstBuffer* gstbuf, GstMapInfo* i
     }
   }
 
-  gint16* outbuf = (gint16*)(info->data);
+  gfloat* outbuf = (gfloat*)(info->data);
   guint to_copy = requested_frames*2;
   const gfloat* internal_buf = self->buf + self->buf_samples - self->nsamples_available;
 
-  for (; self->nsamples_available > 0 && to_copy > 0; --self->nsamples_available, --to_copy) {
-    *(outbuf++) = (gint16)*(internal_buf++);
-  }
+  const guint n_residual_copy = MIN(self->nsamples_available, to_copy);
+  memcpy(outbuf, internal_buf, sizeof(gfloat) * n_residual_copy);
+  internal_buf += n_residual_copy;
+  outbuf += n_residual_copy;
+  self->nsamples_available -= n_residual_copy;
+  to_copy -= n_residual_copy;
 
   if (self->nsamples_available == 0 && to_copy != 0) {
     for (int i = 0; i < self->n_voices; ++i) {
@@ -640,17 +643,12 @@ static gboolean process(GstBtAudioSynth* synth, GstBuffer* gstbuf, GstMapInfo* i
       }
     }
 
-    for (guint i = 0; i < self->buf_samples/4; ++i) {
-      buf4[i] = -32768 + (1 + buf4[i]) * 32767.5f;
-    }
-    
     internal_buf = self->buf;
   }
   
   g_assert(to_copy <= self->nsamples_available);
-  for (; to_copy > 0; --self->nsamples_available, --to_copy) {
-    *(outbuf++) = (gint16)*(internal_buf++);
-  }
+  memcpy(outbuf, internal_buf, sizeof(gfloat) * to_copy);
+  self->nsamples_available -= to_copy;
 
   struct timespec clock_end;
   clock_gettime(CLOCK_MONOTONIC_RAW, &clock_end);
@@ -670,6 +668,7 @@ static void _negotiate (GstBtAudioSynth* base, GstCaps* caps) {
   for (guint i = 0; i < gst_caps_get_size(caps); ++i) {
     GstStructure* const s = gst_caps_get_structure(caps, i);
     
+    gst_structure_fixate_field_string(s, "format", GST_AUDIO_NE (F32));
     gst_structure_fixate_field_nearest_int(s, "channels", 2);
 
     GST_LOG("caps structure %d: %" GST_PTR_FORMAT, i, (void*)s);
