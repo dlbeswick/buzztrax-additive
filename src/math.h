@@ -313,6 +313,11 @@ static inline v4sf sin014f(const v4sf x) {
   return (1.0f + sin4f_method(x)) * 0.5f;
 }
 
+// Cos with range  0 -> 1
+static inline v4sf cos014f(const v4sf x) {
+  return (1.0f + cos4f(x)) * 0.5f;
+}
+
 static inline v4sf pow4f_method(const v4sf x, const v4sf vexp) {
   return pow4f(x, vexp);
 }
@@ -326,6 +331,10 @@ static inline v4sf powsin4f(const v4sf x, const v4sf vexp) {
 
 static inline v4sf powpnzsin4f(const v4sf x, const v4sf vexp) {
   return (powpnz4f(sin014f(x), vexp) - 0.5f) * 2.0f;
+}
+
+static inline v4sf powpnzcos4f(const v4sf x, const v4sf vexp) {
+  return (powpnz4f(cos014f(x), vexp) - 0.5f) * 2.0f;
 }
 
 // A cosine window whose slope can be controlled with a "sharpness" value.

@@ -441,6 +441,7 @@ static void srate_props_fill(GstBtAdditive* const self, StateVirtualVoice* const
   {
     v4sf* const srate = (v4sf*)srate_prop_buf_get(self, vvoice, PROP_AMP_BOOST_CENTER);
     for (guint i = 0; i < nframes/4; ++i)
+      // Constant below is the solution to the equation 440*2**(-5+1*m)=22050 for m.
       srate[i] = 440*powb24f(-5 + srate[i] * 10.64713132180759f);
   }
 }

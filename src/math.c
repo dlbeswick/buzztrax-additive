@@ -148,7 +148,7 @@ v4sf cos4f(v4sf x)
 	6 1
 	7 1
    */
-  return bitselect4f(j+2 > 3, -y, y);
+  return bitselect4f((v4ui)j-2 < 4, -y, y);
 }
 
 void sincos4f(v4sf x, v4sf* out_sin, v4sf* out_cos) {
@@ -180,7 +180,7 @@ void sincos4f(v4sf x, v4sf* out_sin, v4sf* out_cos) {
   *out_sin = bitselect4f(path_select, pathasin, pathbsin);
   *out_sin = bitselect4f(sign ^ (j > 3), -*out_sin, *out_sin);
   *out_cos = bitselect4f(path_select, pathbsin, pathasin);
-  *out_cos = bitselect4f(j+2 > 3, -*out_cos, *out_cos);
+  *out_cos = bitselect4f((v4ui)j-2 < 4, -*out_cos, *out_cos);
 }
 
 v4sf pow4f(const v4sf base, const v4sf exponent) {
