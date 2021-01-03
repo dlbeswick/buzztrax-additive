@@ -455,29 +455,9 @@ static gboolean is_machine_silent(const GstBtAdditive* const self, const StateVi
   }
 }
 
-/*
-  Returns the following:
-       
-  {inc[0], inc[0] + inc[1], inc[0] + inc[1] + inc[2], inc[0] + inc[1] + inc[2] + inc[3]};
-*/
 static inline v4sf horizontal_accumulate(v4sf inc) {
-#if 1
   v4sf result = {inc[0], inc[0] + inc[1], inc[0] + inc[1] + inc[2], inc[0] + inc[1] + inc[2] + inc[3]};
   return result;
-#else
-  // This is fun, but in the end performs no better (or worse) than the above on my CPU.
-  const v4si shufflea = {0, 4, 0, 1};
-  const v4sf a = __builtin_shuffle(inc, V4SF_ZERO, shufflea);
-  
-  const v4si shuffleb = {2, 4, 2, 3};
-  const v4sf b = __builtin_shuffle(inc, V4SF_ZERO, shuffleb);
-  
-  const v4sf c = _mm_hadd_ps((__m128)a, (__m128)b);
-  
-  const v4si shuffled = {4, 4, 1, 1};
-  const v4sf d = __builtin_shuffle(c, V4SF_ZERO, shuffled);
-  return c + d;
-#endif
 }
 
 static void fill_buffer_internal(GstBtAdditive* const self, StateVirtualVoice* const vvoice, GstBuffer* gstbuf,
