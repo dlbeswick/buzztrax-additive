@@ -37,6 +37,7 @@
 #include <stdio.h>
 #include <unistd.h>
 #include <signal.h>
+#include <pmmintrin.h>
 
 GType gstbt_additive_get_type(void);
 #define GSTBT_ADDITIVE(obj) (G_TYPE_CHECK_INSTANCE_CAST((obj),gstbt_additive_get_type(),GstBtAdditive))
@@ -111,7 +112,7 @@ typedef struct {
   guint nsamples_available;
   gfloat* buf;
 
-  gint calls;
+  gint samples_generated;
   long time_accum;
 } GstBtAdditive;
 
@@ -454,6 +455,31 @@ static gboolean is_machine_silent(const GstBtAdditive* const self, const StateVi
   }
 }
 
+/*
+  Returns the following:
+       
+  {inc[0], inc[0] + inc[1], inc[0] + inc[1] + inc[2], inc[0] + inc[1] + inc[2] + inc[3]};
+*/
+static inline v4sf horizontal_accumulate(v4sf inc) {
+#if 1
+  v4sf result = {inc[0], inc[0] + inc[1], inc[0] + inc[1] + inc[2], inc[0] + inc[1] + inc[2] + inc[3]};
+  return result;
+#else
+  // This is fun, but in the end performs no better (or worse) than the above on my CPU.
+  const v4si shufflea = {0, 4, 0, 1};
+  const v4sf a = __builtin_shuffle(inc, V4SF_ZERO, shufflea);
+  
+  const v4si shuffleb = {2, 4, 2, 3};
+  const v4sf b = __builtin_shuffle(inc, V4SF_ZERO, shuffleb);
+  
+  const v4sf c = _mm_hadd_ps((__m128)a, (__m128)b);
+  
+  const v4si shuffled = {4, 4, 1, 1};
+  const v4sf d = __builtin_shuffle(c, V4SF_ZERO, shuffled);
+  return c + d;
+#endif
+}
+
 static void fill_buffer_internal(GstBtAdditive* const self, StateVirtualVoice* const vvoice, GstBuffer* gstbuf,
                                  v4sf* const buffer, int nframes) {
   g_assert(nframes*2 % 4 == 0);
@@ -505,65 +531,63 @@ static void fill_buffer_internal(GstBtAdditive* const self, StateVirtualVoice* c
 	  
       const v4sf freq_note_bent = srate_bend[i];
       const v4sf freq_overtone = freq_note_bent * hscale_freq;
-    
-      // Limit the number of overtones to reduce aliasing.
-	  const v4si mute_sample = (freq_overtone <= 0) | (freq_overtone > srate_freq_max[i]);
-      if (v4si_eq(mute_sample, V4SI_TRUE))
-		continue; // broad check to save CPU
-	  
-	  const v4sf amp_mute_sample = bitselect4f(mute_sample, V4SF_ZERO, V4SF_UNIT);
-	  
-      v4sf amp_boost = srate_amp_boost_db[i];
-	  
-	  if (!v4sf_eq(amp_boost, V4SF_ZERO)) {
-        amp_boost *= powpnz4f(window_sharp_cosine4(
-                                freq_overtone,
-                                srate_amp_boost_center[i],
-                                22050,
-                                srate_amp_boost_sharpness[i]),
-                              srate_amp_boost_exp[i]+FLT_MIN);
-	  }
 
-	  const v4sf hscale_amp =
-		pow4f_method(srate_amp_pow_base[i], (gfloat)j * srate_amp_exp_idx_mul[i])
-		* pow4f_method(hscale_freq, srate_ampfreq_scale_exp[i])
-		;
-
+      // Update accumulators now so that they will still be updated even if a muted sample is skipped.
       const v4sf time_to_rads = F2PI * freq_overtone;
       const v4sf inc = time_to_rads * secs_per_sample;
       const v4sf inc_rm = inc * srate_ringmod_depth[i];
 
-	  f[0] = f[3] + inc[0];
-	  f[1] = f[0] + inc[1];
-	  f[2] = f[1] + inc[2];
-	  f[3] = f[2] + inc[3];
-	  f_rm[0] = f_rm[3] + inc_rm[0];
-	  f_rm[1] = f_rm[0] + inc_rm[1];
-	  f_rm[2] = f_rm[1] + inc_rm[2];
-	  f_rm[3] = f_rm[2] + inc_rm[3];
+      f = horizontal_accumulate(inc) + f[3];
+      f_rm = horizontal_accumulate(inc_rm) + f_rm[3];
 
-      const v4sf sample = (amp_boost + hscale_amp) * amp_mute_sample * sin4f(f);
-      
-      v4sf sample_l;
-      v4sf sample_r;
-	  if (!v4sf_eq(srate_ringmod_rate[i], V4SF_ZERO)) {
-        // Avoid zero input to powpnz here by adding FLT_MIN
-		sample_l = sample * powpnzsin4f(f_rm, srate_ringmod_rate[i]+FLT_MIN);
-		sample_r = sample * powpnzsin4f(f_rm+F2PI*srate_stereo[i], srate_ringmod_rate[i]+FLT_MIN);
+      // Limit the number of overtones to reduce aliasing.
+	  const v4si mute_sample = (freq_overtone <= 0) | (freq_overtone > srate_freq_max[i]);
+
+      // broad check to save CPU
+      if (v4si_eq(mute_sample, V4SI_TRUE)) {
+		continue;
       } else {
-        sample_l = sample;
-        sample_r = sample;
+        const v4sf amp_mute_sample = bitselect4f(mute_sample, V4SF_ZERO, V4SF_UNIT);
+	  
+        v4sf amp_boost = srate_amp_boost_db[i];
+	  
+        if (!v4sf_eq(amp_boost, V4SF_ZERO)) {
+          amp_boost *= powpnz4f(window_sharp_cosine4(
+                                  freq_overtone,
+                                  srate_amp_boost_center[i],
+                                  22050,
+                                  srate_amp_boost_sharpness[i]),
+                                srate_amp_boost_exp[i]+FLT_MIN);
+        }
+
+        const v4sf hscale_amp =
+          pow4f_method(srate_amp_pow_base[i], (gfloat)j * srate_amp_exp_idx_mul[i])
+          * pow4f_method(hscale_freq, srate_ampfreq_scale_exp[i])
+          ;
+
+        const v4sf sample = (amp_boost + hscale_amp) * amp_mute_sample * sin4f(f);
+      
+        v4sf sample_l;
+        v4sf sample_r;
+        if (!v4sf_eq(srate_ringmod_rate[i], V4SF_ZERO)) {
+          // Avoid zero input to powpnz here by adding FLT_MIN
+          sample_l = sample * powpnzsin4f(f_rm, srate_ringmod_rate[i]+FLT_MIN);
+          sample_r = sample * powpnzsin4f(f_rm+F2PI*srate_stereo[i], srate_ringmod_rate[i]+FLT_MIN);
+        } else {
+          sample_l = sample;
+          sample_r = sample;
+        }
+      
+        buf4[0][0] += sample_l[0];
+        buf4[0][1] += sample_r[0];
+        buf4[0][2] += sample_l[1];
+        buf4[0][3] += sample_r[1];
+        buf4[1][0] += sample_l[2];
+        buf4[1][1] += sample_r[2];
+        buf4[1][2] += sample_l[3];
+        buf4[1][3] += sample_r[3];
       }
       
-	  buf4[0][0] += sample_l[0];
-	  buf4[0][1] += sample_r[0];
-	  buf4[0][2] += sample_l[1];
-	  buf4[0][3] += sample_r[1];
-	  buf4[1][0] += sample_l[2];
-	  buf4[1][1] += sample_r[2];
-	  buf4[1][2] += sample_l[3];
-	  buf4[1][3] += sample_r[3];
-
       buf4 += 2;
     }
 
@@ -652,11 +676,11 @@ static gboolean process(GstBtAudioSynth* synth, GstBuffer* gstbuf, GstMapInfo* i
   struct timespec clock_end;
   clock_gettime(CLOCK_MONOTONIC_RAW, &clock_end);
   self->time_accum += (clock_end.tv_sec - clock_start.tv_sec) * 1e9L + (clock_end.tv_nsec - clock_start.tv_nsec);
-  self->calls += self->parent.generate_samples_per_buffer;
-  if (self->calls > self->parent.info.rate) {
-    GST_INFO("Avg perf: %f samples/sec\n", self->calls / (self->time_accum / 1e9f));
+  self->samples_generated += self->parent.generate_samples_per_buffer;
+  if (self->samples_generated > self->parent.info.rate) {
+    GST_INFO("Avg perf: %f samples/sec\n", self->samples_generated / (self->time_accum / 1e9f));
     self->time_accum = 0;
-    self->calls = 0;
+    self->samples_generated = 0;
   }
   
   // Note: if FALSE is ever returned from this function then downstream effects stop making noise.
@@ -766,33 +790,37 @@ G_DIR_SEPARATOR_S "" PACKAGE "-gst" G_DIR_SEPARATOR_S "GstBtSimSyn.html");*/
   properties[PROP_AMP_EXP_IDX_MUL] =
     g_param_spec_float("amp-exp-idx-mul", "Amp Exp Idx Mul", "Amplitude Exponent Index Multiplier", -10, 10, 1, flags);
   properties[PROP_AMPFREQ_SCALE_IDX_MUL] =
-    g_param_spec_float("ampfreq-scale-idx-mul", "Ampfreq Scale Idx Mul", "Amplitude + Frequency Scale Index Multiplier", -10, 10, 1, flags);
+    g_param_spec_float("ampfreq-scale-idx-mul", "Ampfreq Scale Idx Mul", "Amplitude + Frequency Scale Index Multiplier",
+                       -10, 10, 1, flags);
   properties[PROP_AMPFREQ_SCALE_OFFSET] =
-    g_param_spec_float("ampfreq-scale-offset", "Ampfreq Scale Offset", "Amplitude + Frequency Scale Offset", -10, 10, 0, flags);
+    g_param_spec_float("ampfreq-scale-offset", "Ampfreq Scale Offset", "Amplitude + Frequency Scale Offset",
+                       -10, 10, 0, flags);
   properties[PROP_AMPFREQ_SCALE_EXP] =
-    g_param_spec_float("ampfreq-scale-exp", "Ampfreq Scale Exp", "Amplitude + Frequency Scale Exponent", -10, 1, -1, flags);
+    g_param_spec_float("ampfreq-scale-exp", "Ampfreq Scale Exp", "Amplitude + Frequency Scale Exponent",
+                       -10, 1, -1, flags);
   properties[PROP_AMP_BOOST_CENTER] =
-    g_param_spec_float("amp-boost-center", "AmpBoost Cntr", "AmpBoost Center", 0, 1, 0, flags);
+    g_param_spec_float("amp-boost-center", "AmpBoost Cntr", "AmpBoost Center Frequency", 0, 1, 0, flags);
   properties[PROP_AMP_BOOST_SHARPNESS] =
     g_param_spec_float("amp-boost-sharpness", "AmpBoost Shrp", "AmpBoost Sharpness", 0, 200, 0, flags);
   properties[PROP_AMP_BOOST_EXP] =
-    g_param_spec_float("amp-boost-exp", "AmpBoost Exp", "AmpBoost Exp", 0, 1024, 2, flags);
+    g_param_spec_float("amp-boost-exp", "AmpBoost Exp", "AmpBoost Exponential Shape", 0, 1024, 2, flags);
   properties[PROP_AMP_BOOST_DB] =
     g_param_spec_float("amp-boost-db", "AmpBoost dB", "AmpBoost dB", 0, 30, 2, flags);
   properties[PROP_RINGMOD_RATE] =
-    g_param_spec_float("ringmod-rate", "Ringmod Rate", "Ringmod Rate", 0, 5, 0, flags);
+    g_param_spec_float("ringmod-rate", "RM Rate", "Per-overtone Ringmod Rate (Shape)", 0, 5, 0, flags);
   properties[PROP_RINGMOD_DEPTH] =
-    g_param_spec_float("ringmod-depth", "Ringmod Depth", "Ringmod Depth", 0, 0.5, 0, flags);
+    g_param_spec_float("ringmod-depth", "RM Depth", "Per-overtone Ringmod Depth", 0, 0.5, 0, flags);
   properties[PROP_RINGMOD_OT_OFFSET] =
-    g_param_spec_float("ringmod-ot-offset", "Ringmod OT Offset", "Ring Modulation Overtone Offset", 0, 1, 0, flags);
+    g_param_spec_float("ringmod-ot-offset", "Ringmod OT Offset", "Per-overtone Ring Modulation Offset (Phase)",
+                       0, 1, 0, flags);
   properties[PROP_BEND] =
     g_param_spec_float("bend", "Bend", "Bend", -1000, 1000, 0, flags);
   properties[PROP_STEREO] =
-    g_param_spec_float("stereo", "Stereo", "Stereo Width", 0, 1, 0.5, flags);
+    g_param_spec_float("stereo", "Stereo", "Stereo Width", 0, 1, 0.25, flags);
   properties[PROP_VIRTUAL_VOICES] =
     g_param_spec_uint("virtual-voices", "Virt. Voice", "Virtual Voices", 1, MAX_VIRTUAL_VOICES, 1, flags);
   properties[PROP_RELEASE_ON_NOTE] =
-    g_param_spec_boolean("release-on-note", "Rel On Note", "Release on each note", TRUE, flags);
+    g_param_spec_boolean("release-on-note", "Rel On Note", "Release virtual voice on each note", TRUE, flags);
   properties[PROP_VOL] =
     g_param_spec_float("vol", "Vol", "Volume", 0, 1, 0.5, flags);
   properties[PROP_NOTE] =
