@@ -91,15 +91,15 @@ static inline v4sf bitselect4f(const v4si cond, const v4sf if_t, const v4sf if_f
 }
 
 static inline gboolean v4ui_eq(v4ui a, v4ui b) {
-  return a[0] == b[0] && a[1] == b[1] && a[2] == b[2] && a[3] == b[3];
+  return ((__int128_t)(a == b)) != 0;
 }
 
 static inline gboolean v4sf_eq(v4sf a, v4sf b) {
-  return a[0] == b[0] && a[1] == b[1] && a[2] == b[2] && a[3] == b[3];
+  return ((__int128_t)(a == b)) != 0;
 }
 
 static inline gboolean v4si_eq(v4si a, v4si b) {
-  return a[0] == b[0] && a[1] == b[1] && a[2] == b[2] && a[3] == b[3];
+  return ((__int128_t)(a == b)) != 0;
 }
 
 static inline v4ui min4ui(v4ui a, v4ui b) {
@@ -136,7 +136,7 @@ static inline v4si max4i(v4si a, v4si b) {
 }
 
 static inline v4si clamp4i(v4si x, v4si min, v4si max) {
-  // The compiler will vectorize this appropriately (no min/max for integers in SSE2)
+  // The compiler will vectorize this appropriately (no min/max for integers in SSE)
   return min4i(max, max4i(x, min));
 }
 

@@ -464,20 +464,19 @@ static void fill_buffer_internal(GstBtAdditive* const self, StateVirtualVoice* c
                                  v4sf* const buffer, int nframes) {
   g_assert(nframes*2 % 4 == 0);
 
-  memset(buffer, 0, nframes/4*2*sizeof(typeof(*buffer)));
+  const int n4frames = nframes/4;
+  
+  memset(buffer, 0, n4frames*2*sizeof(typeof(*buffer)));
   
   const gfloat rate = self->parent.info.rate;
-  const gfloat secs_per_sample = 1.0f / rate;
-
-  const gfloat freq_note = (gfloat)gstbt_tone_conversion_translate_from_number(self->tones, vvoice->note);
 
   srate_props_fill(self, vvoice, self->parent.running_time, GST_SECOND / rate, nframes);
-
-  const int n4frames = nframes/4;
 
   if (is_machine_silent(self, vvoice)) {
     return;
   }
+
+  const gfloat freq_note = (gfloat)gstbt_tone_conversion_translate_from_number(self->tones, vvoice->note);
 
   v4sf* const srate_bend = (v4sf*)srate_prop_buf_get(self, vvoice, PROP_BEND);
   for (guint i = 0; i < n4frames; ++i) {
@@ -497,6 +496,8 @@ static void fill_buffer_internal(GstBtAdditive* const self, StateVirtualVoice* c
   const v4sf* const srate_ringmod_rate = (v4sf*)srate_prop_buf_get(self, vvoice, PROP_RINGMOD_RATE);
   const v4sf* const srate_ringmod_depth = (v4sf*)srate_prop_buf_get(self, vvoice, PROP_RINGMOD_DEPTH);
   const v4sf* const srate_stereo = (v4sf*)srate_prop_buf_get(self, vvoice, PROP_STEREO);
+  
+  const gfloat secs_per_sample = 1.0f / rate;
   
   for (int j = self->sum_start_idx, idx_o = 0; idx_o < self->overtones; ++j, ++idx_o) {
     g_assert(idx_o < MAX_OVERTONES);

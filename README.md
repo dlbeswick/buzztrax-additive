@@ -4,9 +4,14 @@ This is a synth that generates waveforms by adding sines together.
 
 It can be inefficient to generate waveforms this way for low frequencies, but it's fun and easy to understand. It's also quite easy to avoid aliasing.
 
-Ring modulation can be applied on each of the sines to change the sound's texture, and most parameters are controllable at a sample-rate level via ADSR envelopes and LFOs in many different combinations.
+Ring modulation can be applied on each of the sines to change the sound's texture. This produces an effect similar to subtracting two waveforms that are offset in frequency. 
 
 A shaped "amplitude boost" that emulates a sharp filter cutoff can also be swept along the waveform.
+
+Voices aren't used for polyphony like many other synths; instead each voice is a combined ADSR envelope and LFO that
+can modulate the global parameters on a sample-rate basis.
+
+The voices can also be paired with a "master" voice. The master voice then further modulates the ADSR/LFO parameters of the paired voice.
 
 # Generation equation
 
@@ -29,6 +34,12 @@ This synth uses a unified equation that can cover all the above cases, as follow
 	
 By configuring the parameters correctly, this equation can generate each of the above waveforms, and maybe some other interesting ones besides.
 
+Lowpass, highpass and filter resonance can also be emulated by changing the right parameters.
+
+# Other notes
+
+There is state retained for each overtone, and the state isn't updated when the overtones aren't used, i.e. when max overtones is reduced, or when an overtone exceeds the frequency max or undershoots zero. The phase of the ring modulated sines of those overtones can the "de-correlate" from the other sines, which can give it a noisy character until the state is re-synced manually or on the next note. This is a CPU-saving measure that can be disabled via preferences.
+
 # Some notes on performance
 
 GCC is generally very good at vectorising loops when `-ffast-math` and `-ftree-loop-vectorize` is enabled, but for the important loops I'm often using the vector types and builtins just to be sure that they are being vectorized.
@@ -43,7 +54,7 @@ An example of how to examine generated assembly code to see how much has been ve
 	
 I.e. copy the build command that `make` generates and add `-Wa,-adhln`.
 
-Laster, Julien's functions were replaced by the same Cephes library functions translated to use vector intrinsics. These were found to perform just as fast.
+Ultimately, I replaced Julien's SSE function with functions from the Cephes library converted to use GCC's vectorisation feature, and I found that the performance was just as good. Cephes was also the source for Julien's functions.
 
 Disabling denormal floats gave a minor performance boost.
 

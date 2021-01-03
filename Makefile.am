@@ -15,7 +15,7 @@ libadditive_la_CFLAGS = $(PKGCONFIG_DEPS_CFLAGS) $(OPTIMIZE_CFLAGS) \
 	-fvisibility=hidden
 libadditive_la_LDFLAGS = $(PKGCONFIG_DEPS_LIBS) -module -avoid-version
 
-# Remove 'la' file as the generated lib isn't intended to be linked with others.
+# The 'la' file is unneeded as the generated lib isn't intended to be linked with others.
 install-data-hook:
 	$(RM) $(DESTDIR)$(plugindir)/libadditive*.la
 #	$(LN_S) -f TBD.html  $(DESTDIR)$(userdocdir)/TBD.html
