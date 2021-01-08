@@ -47,6 +47,17 @@ GType gstbt_additive_get_type(void);
 
 GST_DEBUG_CATEGORY(GST_CAT_DEFAULT);
 
+static GstStaticPadTemplate pad_template =
+GST_STATIC_PAD_TEMPLATE ("src",
+    GST_PAD_SRC,
+    GST_PAD_ALWAYS,
+    GST_STATIC_CAPS ("audio/x-raw, "
+        "format = (string) " GST_AUDIO_NE (F32) ", "
+        "layout = (string) interleaved, "
+        "rate = (int) [ 1, MAX ], " "channels = (int) [1, 2]")
+    );
+
+
 static gfloat lut_sin[1024];
 
 enum { MAX_OVERTONES = 600 };
@@ -672,7 +683,6 @@ static void _negotiate (GstBtAudioSynth* base, GstCaps* caps) {
   for (guint i = 0; i < gst_caps_get_size(caps); ++i) {
     GstStructure* const s = gst_caps_get_structure(caps, i);
     
-    gst_structure_fixate_field_string(s, "format", GST_AUDIO_NE (F32));
     gst_structure_fixate_field_nearest_int(s, "channels", 2);
 
     GST_LOG("caps structure %d: %" GST_PTR_FORMAT, i, (void*)s);
@@ -813,6 +823,9 @@ G_DIR_SEPARATOR_S "" PACKAGE "-gst" G_DIR_SEPARATOR_S "GstBtSimSyn.html");*/
 
   g_object_class_install_properties (gobject_class, N_PROPERTIES, properties);
 
+  // Override AudioSynth's pad so that float format can be used.
+  gst_element_class_add_static_pad_template (element_class, &pad_template);
+  
   for (int i = 0; i < sizeof(lut_sin) / sizeof(typeof(lut_sin)); ++i) {
     lut_sin[i] = (gfloat)sin(G_PI * 2 * ((double)i / (sizeof(lut_sin) / sizeof(typeof(lut_sin)))));
   }
