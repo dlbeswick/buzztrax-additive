@@ -761,8 +761,9 @@ static void gstbt_additive_class_init(GstBtAdditiveClass * const klass) {
 "file://" DATADIR "" G_DIR_SEPARATOR_S "gtk-doc" G_DIR_SEPARATOR_S "html"
 G_DIR_SEPARATOR_S "" PACKAGE "-gst" G_DIR_SEPARATOR_S "GstBtSimSyn.html");*/
 
+  // Note: variables will not be set to default values unless G_PARAM_CONSTRUCT is given.
   const GParamFlags flags =
-    (GParamFlags)(G_PARAM_READWRITE | GST_PARAM_CONTROLLABLE | G_PARAM_STATIC_STRINGS);
+    (GParamFlags)(G_PARAM_READWRITE | GST_PARAM_CONTROLLABLE | G_PARAM_STATIC_STRINGS | G_PARAM_CONSTRUCT);
   
   // GstBtChildBin interface properties
   properties[PROP_CHILDREN] = g_param_spec_ulong(
