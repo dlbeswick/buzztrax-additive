@@ -46,6 +46,7 @@ struct _GstBtAdditiveV
   
   guint srate_buf_size;
   v4sf* srate_buf;
+  gboolean any_nonzero;
   GstClockTime timestamp_last;
 };
 
@@ -142,17 +143,17 @@ void gstbt_additivev_mod_value_array_f_for_prop_idx(
   if (timestamp != self->timestamp_last) {
     self->timestamp_last = timestamp;
     
-    gboolean any_nonzero = gstbt_prop_srate_cs_get_value_array_f(
+    self->any_nonzero = gstbt_prop_srate_cs_get_value_array_f(
       (GstBtPropSrateControlSource*)self->adsr, timestamp, interval, n_values, (gfloat*)self->srate_buf);
     
-    any_nonzero =
+    self->any_nonzero =
       gstbt_lfo_float_mod_value_array_accum(self->lfo, timestamp, interval, (gfloat*)self->srate_buf, n_values, voices)
-	  || any_nonzero;
-
-    props_active[idx] = props_active[idx] || any_nonzero;
-    props_controlled[idx] = TRUE;
+	  || self->any_nonzero;
   }
 
+  props_active[idx] = props_active[idx] || self->any_nonzero;
+  props_controlled[idx] = TRUE;
+  
   v4sf* outbuf = (v4sf*)values + self->srate_buf_size/4 * idx;
   if (props_active[idx]) {
     for (guint i = 0; i < self->srate_buf_size/4; ++i)
