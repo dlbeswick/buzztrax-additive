@@ -491,7 +491,7 @@ static void fill_buffer_internal(GstBtAdditive* const self, StateVirtualVoice* c
 
   v4sf* const srate_bend = (v4sf*)srate_prop_buf_get(self, vvoice, PROP_BEND);
   for (guint i = 0; i < n4frames; ++i) {
-    srate_bend[i] = freq_note + freq_note * srate_bend[i];
+    srate_bend[i] = freq_note * powb24f(srate_bend[i]/12.0f);
   }
   
   const v4sf* const srate_freq_max = (v4sf*)srate_prop_buf_get(self, vvoice, PROP_FREQ_MAX);
@@ -806,7 +806,7 @@ G_DIR_SEPARATOR_S "" PACKAGE "-gst" G_DIR_SEPARATOR_S "GstBtSimSyn.html");*/
     g_param_spec_float("ringmod-ot-offset", "Ringmod OT Offset", "Per-overtone Ring Modulation Offset (Phase)",
                        0, 1, 0, flags);
   properties[PROP_BEND] =
-    g_param_spec_float("bend", "Bend", "Bend", -1000, 1000, 0, flags);
+    g_param_spec_float("bend", "Bend (semitones)", "Bend (semitones)", -64, 64, 0, flags);
   properties[PROP_STEREO] =
     g_param_spec_float("stereo", "Stereo", "Stereo Width", 0, 1, 0.25, flags);
   properties[PROP_VIRTUAL_VOICES] =
