@@ -299,7 +299,7 @@ void gstbt_adsr_off(GstBtAdsr* const self, const GstClockTime time) {
   self->ts_off_end4 = (guint)((self->ts_off_end - self->ts_trigger)/1e2L) * V4UI_UNIT;
 }
 
-void gstbt_adsr_trigger(GstBtAdsr* const self, const GstClockTime time) {
+void gstbt_adsr_trigger(GstBtAdsr* const self, const GstClockTime time, gfloat anticlick) {
   const gboolean envelope_never_triggered = self->ts_trigger == 0;
 
   gfloat onlevel;
@@ -312,7 +312,7 @@ void gstbt_adsr_trigger(GstBtAdsr* const self, const GstClockTime time) {
 	self->ts_zero_end = self->ts_trigger;
   } else {
     self->on_level = onlevel;
-	self->ts_zero_end = self->ts_trigger + (GstClockTime)(self->on_level * 0.05 * GST_SECOND);
+	self->ts_zero_end = self->ts_trigger + (GstClockTime)(self->on_level * anticlick * GST_SECOND);
   }
   self->ts_zero_end4 = (guint)((self->ts_zero_end - time)/1e2L) * V4UI_UNIT;
   

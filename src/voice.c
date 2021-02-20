@@ -104,8 +104,8 @@ void gstbt_additivev_note_off(GstBtAdditiveV* self, GstClockTime time) {
   gstbt_adsr_off(self->adsr, time);
 }
 
-void gstbt_additivev_note_on(GstBtAdditiveV* self, GstClockTime time) {
-  gstbt_adsr_trigger(self->adsr, time);
+void gstbt_additivev_note_on(GstBtAdditiveV* self, GstClockTime time, gfloat anticlick) {
+  gstbt_adsr_trigger(self->adsr, time, anticlick);
 }
 
 void gstbt_additivev_mod_value_array_f_for_prop(
@@ -121,7 +121,7 @@ void gstbt_additivev_mod_value_array_f_for_prop(
   guint idx = self->idx_target_prop - 1;
   if (idx < self->n_parent_props) {
     gstbt_additivev_mod_value_array_f_for_prop_idx(self, timestamp, interval, n_values, values, props_active,
-                                                   props_controlled, voices, idx);
+                                                   props_controlled, voices, idx, TRUE);
   }
 }
 
@@ -134,7 +134,8 @@ void gstbt_additivev_mod_value_array_f_for_prop_idx(
   gboolean* props_active,
   gboolean* props_controlled,
   GstBtAdditiveV** voices,
-  guint idx) {
+  guint property_idx,
+  gboolean use_lfo) {
 
   g_assert(self->srate_buf_size);
   
@@ -145,17 +146,20 @@ void gstbt_additivev_mod_value_array_f_for_prop_idx(
     
     self->any_nonzero = gstbt_prop_srate_cs_get_value_array_f(
       (GstBtPropSrateControlSource*)self->adsr, timestamp, interval, n_values, (gfloat*)self->srate_buf);
-    
-    self->any_nonzero =
-      gstbt_lfo_float_mod_value_array_accum(self->lfo, timestamp, interval, (gfloat*)self->srate_buf, n_values, voices)
-	  || self->any_nonzero;
+
+    if (use_lfo) {
+      self->any_nonzero =
+        gstbt_lfo_float_mod_value_array_accum(self->lfo, timestamp, interval, (gfloat*)self->srate_buf, n_values,
+                                              voices)
+        || self->any_nonzero;
+    }
   }
 
-  props_active[idx] = props_active[idx] || self->any_nonzero;
-  props_controlled[idx] = TRUE;
+  props_active[property_idx] = props_active[property_idx] || self->any_nonzero;
+  props_controlled[property_idx] = TRUE;
   
-  v4sf* outbuf = (v4sf*)values + self->srate_buf_size/4 * idx;
-  if (props_active[idx]) {
+  v4sf* outbuf = (v4sf*)values + self->srate_buf_size/4 * property_idx;
+  if (props_active[property_idx]) {
     for (guint i = 0; i < self->srate_buf_size/4; ++i)
       outbuf[i] *= self->srate_buf[i];
   } else {

@@ -105,6 +105,7 @@ typedef struct {
   gboolean release_on_note;
   gfloat vol;
   GstBtNote note;
+  gfloat anticlick;
   
   // These are standard Buzztrax voices, repurposed as ADSR+LFOs.
   gulong n_voices;
@@ -132,6 +133,7 @@ enum {
   PROP_OVERTONES,
   PROP_RELEASE_ON_NOTE,
   PROP_NOTE,
+  PROP_ANTICLICK,
   N_PROPERTIES
 };
 
@@ -224,7 +226,7 @@ static void _set_property (GObject * object, guint prop_id, const GValue * value
       self->note = note;
       vvoice->note = note;
       for (guint i = 0; i < self->n_voices; ++i) {
-        gstbt_additivev_note_on(vvoice->voices[i], self->parent.running_time);
+        gstbt_additivev_note_on(vvoice->voices[i], self->parent.running_time, self->anticlick);
       }
     }
     break;
@@ -295,6 +297,9 @@ static void _set_property (GObject * object, guint prop_id, const GValue * value
     break;
   case PROP_VOL:
     self->vol = g_value_get_float(value);
+    break;
+  case PROP_ANTICLICK:
+    self->anticlick = g_value_get_float(value);
     break;
   default:
     G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
@@ -368,6 +373,9 @@ static void _get_property (GObject * object, guint prop_id, GValue * value, GPar
     break;
   case PROP_VOL:
     g_value_set_float(value, self->vol);
+    break;
+  case PROP_ANTICLICK:
+    g_value_set_float(value, self->anticlick);
     break;
   default:
     G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
@@ -819,6 +827,9 @@ G_DIR_SEPARATOR_S "" PACKAGE "-gst" G_DIR_SEPARATOR_S "GstBtSimSyn.html");*/
     g_param_spec_enum("note", "Note", "Note", GSTBT_TYPE_NOTE, GSTBT_NOTE_NONE,
                       G_PARAM_WRITABLE | GST_PARAM_CONTROLLABLE | G_PARAM_STATIC_STRINGS);
 
+  properties[PROP_ANTICLICK] =
+    g_param_spec_float("anticlick", "Anti-click", "Anti-click", 0, 1, 0.05, flags);
+  
   for (int i = 1; i < N_PROPERTIES; ++i)
     g_assert(properties[i]);
 

@@ -29,7 +29,7 @@ GstBtAdditiveV* gstbt_additivev_new(GParamSpec** parent_props, guint n_parent_pr
 void gstbt_additivev_copy(GstBtAdditiveV* src, GstBtAdditiveV* dst);
 void gstbt_additivev_process(GstBtAdditiveV* self, GstBuffer* gstbuf);
 void gstbt_additivev_note_off(GstBtAdditiveV* self, GstClockTime time);
-void gstbt_additivev_note_on(GstBtAdditiveV* self, GstClockTime time);
+void gstbt_additivev_note_on(GstBtAdditiveV* self, GstClockTime time, gfloat anticlick);
 void gstbt_additivev_on_buf_size_change(GstBtAdditiveV* self, guint n_samples);
 
 void gstbt_additivev_mod_value_array_f_for_prop(
@@ -51,6 +51,7 @@ void gstbt_additivev_mod_value_array_f_for_prop_idx(
   gboolean props_active[],
   gboolean props_controlled[],
   GstBtAdditiveV** voices,
-  guint idx);
+  guint property_idx,
+  gboolean use_lfo);
 
 G_END_DECLS

@@ -23,7 +23,7 @@ G_DECLARE_FINAL_TYPE(GstBtAdsr, gstbt_adsr, GSTBT, ADSR, GstBtPropSrateControlSo
 
 GstBtAdsr* gstbt_adsr_new(GObject* owner, const char* property_postfix);
 void gstbt_adsr_props_add(GObjectClass* const klass, const char* postfix, guint* idx);
-void gstbt_adsr_trigger(GstBtAdsr* const self, const GstClockTime time);
+void gstbt_adsr_trigger(GstBtAdsr* const self, const GstClockTime time, gfloat anticlick);
 void gstbt_adsr_off(GstBtAdsr* const self, const GstClockTime time);
 
 gboolean gstbt_adsr_property_set(GObject* obj, guint prop_id, const GValue* value, GParamSpec* pspec);

@@ -65,8 +65,11 @@ static inline v4sf get_sample(const guint waveform, const v4sf accum_unbounded, 
   case GSTBT_LFO_FLOAT_WAVEFORM_SQUARE:
     return bitselect4f(accum < shape, -V4SF_UNIT, V4SF_UNIT);
   case GSTBT_LFO_FLOAT_WAVEFORM_SAW:
-    // Constant ensures that a value of 0.5 results in exponent of one. Range is 0.015 to 64.
+    // Constant ensures that a shape value of 0.5 results in exponent of one. Range is 0.015 to 64.
     return -1 + pow4f(accum, 0.5f*powb24f(-10+(shape+0.41667f)*12)) * 2;
+  case GSTBT_LFO_FLOAT_WAVEFORM_TRIANGLE:
+    // s : 20; plot2d(if (x < 0.5) then (x*2)**s else ((1-x)*2)**s,[x,0,1],[y,0,1]);
+    return powpnz4f(bitselect4f(accum < 0.5f, accum, 1 - accum) * 2, 0.5f*powb24f(-10+(shape+0.41667f)*12));
   default:
     return V4SF_ZERO;
   }
@@ -102,9 +105,10 @@ static void srate_props_fill(GstBtLfoFloat* const self, const GstClockTime times
   memset(self->props_srate_nonzero, 0, sizeof(self->props_srate_nonzero));
   memset(self->props_srate_controlled, 0, sizeof(self->props_srate_controlled));
 
-  if (voices && self->idx_voice_master != -1 && self->voice_master_prop != GSTBT_LFO_FLOAT_PROP_NONE &&
-      self->idx_voice_master != self->idx_voice) {
-    
+  if (voices && self->idx_voice_master != -1 && self->voice_master_prop != GSTBT_LFO_FLOAT_PROP_NONE) {
+
+    // Note: only modulate with LFO if "voice master" isn't set to reference itself.
+    // In that case, the ADSR of the current voice will modulate, but not the LFO.
     gstbt_additivev_mod_value_array_f_for_prop_idx(
       voices[self->idx_voice_master],
       timestamp,
@@ -114,7 +118,8 @@ static void srate_props_fill(GstBtLfoFloat* const self, const GstClockTime times
       self->props_srate_nonzero,
       self->props_srate_controlled,
       voices,
-      (guint)self->voice_master_prop
+      (guint)self->voice_master_prop,
+      self->idx_voice_master != self->idx_voice
       );
   }
 }
