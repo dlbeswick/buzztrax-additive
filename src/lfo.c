@@ -38,6 +38,7 @@ struct _GstBtLfoFloat {
   gfloat phase;
   GstBtLfoFloatWaveform waveform;
 
+  gfloat c_frequency;
   gfloat accum;
   gfloat integrate;
   
@@ -48,16 +49,35 @@ struct _GstBtLfoFloat {
   v4sf* buf_srate_props;
   gboolean props_srate_nonzero[GSTBT_LFO_FLOAT_PROP_N];
   gboolean props_srate_controlled[GSTBT_LFO_FLOAT_PROP_N];
+  guint32 noise_state;
+  gfloat noise_cur;
 };
 
 G_DEFINE_TYPE(GstBtLfoFloat, gstbt_lfo_float, G_TYPE_OBJECT);
 
 static GParamSpec* properties[GSTBT_LFO_FLOAT_PROP_N] = { NULL, };
 
+// https://www.pcg-random.org/pdf/hmc-cs-2014-0905.pdf
+static const guint32 lcg_multiplier = 1103515245;
+static const guint32 lcg_increment = 12345;
+
+static inline gfloat lcg(guint32* state) {
+  *state = (*state + lcg_increment) * lcg_multiplier;
+
+  // Hexadecimal floating point literals are a means to define constant real values that can be exactly
+  // represented as a floating point value.
+  //
+  // https://www.pcg-random.org/posts/bounded-rands.html
+  // https://www.exploringbinary.com/hexadecimal-floating-point-constants/
+  // pg 57-58: http://www.open-std.org/jtc1/sc22/wg14/www/docs/n1256.pdf
+  return -1.0f + 0x2.0p-32 * *state;
+}
+
 // 0 <= accum < get_accum_period()
-static inline v4sf get_sample(const guint waveform, const v4sf accum_unbounded, const v4sf shape) {
+static inline v4sf get_sample(const guint waveform, const v4sf accum_unbounded, const v4sf shape,
+                              const v4sf accum_unbounded_prev, guint32 *noise_state, gfloat *noise_cur) {
   // accum % 1.0 (period)
-  v4sf accum = accum_unbounded - floor4f(accum_unbounded);
+  const v4sf accum = accum_unbounded - floor4f(accum_unbounded);
   
   switch (waveform) {
   case GSTBT_LFO_FLOAT_WAVEFORM_SINE:
@@ -70,6 +90,22 @@ static inline v4sf get_sample(const guint waveform, const v4sf accum_unbounded, 
   case GSTBT_LFO_FLOAT_WAVEFORM_TRIANGLE:
     // s : 20; plot2d(if (x < 0.5) then (x*2)**s else ((1-x)*2)**s,[x,0,1],[y,0,1]);
     return powpnz4f(bitselect4f(accum < 0.5f, accum, 1 - accum) * 2, 0.5f*powb24f(-10+(shape+0.41667f)*12));
+  case GSTBT_LFO_FLOAT_WAVEFORM_NOISE: {
+    // For each sample, check to see if the accumulator value passed 1.0 since the last sample. If so, advance the
+    // RNG.
+    const v4sf accum_prev_smp = {accum_unbounded_prev[3], accum_unbounded[0], accum_unbounded[1], accum_unbounded[2]};
+    const v4si period_changed = trunc4f(accum_prev_smp) != trunc4f(accum_unbounded);
+    
+    v4sf result;
+    for (guint i = 0; i < 4; ++i) {
+      if (period_changed[i]) {
+        *noise_cur = lcg(noise_state);
+      }
+      result[i] = *noise_cur;
+    }
+    
+    return result;
+  }
   default:
     return V4SF_ZERO;
   }
@@ -84,7 +120,9 @@ static void srate_props_fill(GstBtLfoFloat* const self, const GstClockTime times
     GValue src = G_VALUE_INIT;
 
     v4sf value;
-    if (g_type_is_a(properties[i]->value_type, G_TYPE_ENUM)) {
+    if (i == GSTBT_LFO_FLOAT_PROP_FREQUENCY) {
+      value = V4SF_UNIT * self->c_frequency;
+    } else if (g_type_is_a(properties[i]->value_type, G_TYPE_ENUM)) {
       g_value_init(&src, G_TYPE_UINT);
       g_object_get_property((GObject*)self->owner, properties[i]->name, &src);
       value = (gfloat)g_value_get_uint(&src) * V4SF_UNIT;
@@ -126,7 +164,8 @@ static void srate_props_fill(GstBtLfoFloat* const self, const GstClockTime times
 
 static gboolean mod_value_array_accum(GstBtLfoFloat* self, GstClockTime timestamp, GstClockTime interval,
                                       gfloat* values, guint n_values, GstBtAdditiveV** voices) {
-  if (self->frequency == 0.0f)
+  g_assert(self->c_frequency != 0);
+  if (self->amplitude == 0)
 	return FALSE;
 
   g_assert(n_values % 4 == 0);
@@ -162,7 +201,7 @@ static gboolean mod_value_array_accum(GstBtLfoFloat* self, GstClockTime timestam
   
 	const v4sf val =
       srate_offset[i] +
-      get_sample(waveform, accum4 + srate_phase[i], srate_shape[i]) *
+      get_sample(waveform, accum4 + srate_phase[i], srate_shape[i], accum4, &self->noise_state, &self->noise_cur) *
       srate_amplitude[i];
 
     v4sf integrate = alpha*val;
@@ -189,8 +228,21 @@ gboolean gstbt_lfo_float_mod_value_array_accum(GstBtLfoFloat* self, GstClockTime
   return mod_value_array_accum(self, timestamp, interval, values, n_values, voices);
 }
 
+gfloat elerp(gfloat start, gfloat end, gfloat base, gfloat x) {
+  return -1+start+powf(1+end-start,powf(x,base));
+}
+
 gboolean gstbt_lfo_float_property_set(GObject* obj, guint prop_id, const GValue* value, GParamSpec* pspec) {
-  return bt_properties_simple_set(((GstBtLfoFloat*)obj)->props, pspec, value);
+  GstBtLfoFloat* self = (GstBtLfoFloat*)obj;
+  gboolean result = bt_properties_simple_set(self->props, pspec, value);
+
+  // GSTBT_LFO_FLOAT_PROP_* indices are zero-based, as opposed to the 1-based GObject props.
+  if (prop_id-1 == GSTBT_LFO_FLOAT_PROP_FREQUENCY) {
+    // Range from 1 minute period to every sample period (possibly useful for noise).
+    self->c_frequency = elerp(1.0/60.0, 44100, 2, self->frequency);
+  }
+  
+  return result;
 }
 
 gboolean gstbt_lfo_float_property_get(GObject* obj, guint prop_id, GValue* value, GParamSpec* pspec) {
@@ -242,7 +294,7 @@ void gstbt_lfo_float_props_add(GObjectClass* const gobject_class, guint* idx) {
   GParamSpec** prop = properties;
 
   *(prop++) = g_param_spec_float("lfo-amplitude", "LFO Amp", "LFO Amplitude", 0, 10, 0, flags);
-  *(prop++) = g_param_spec_float("lfo-frequency", "LFO Freq", "LFO Frequency", 0, 100, 0, flags);
+  *(prop++) = g_param_spec_float("lfo-frequency", "LFO Freq", "LFO Frequency", 0, 1, 0, flags);
   *(prop++) = g_param_spec_float("lfo-shape", "LFO Shape", "LFO Shape", 0, 1, 0.5f, flags);
   *(prop++) = g_param_spec_float("lfo-filter", "LFO Filter", "LFO Filter", 0, 1, 1, flags);
   *(prop++) = g_param_spec_float("lfo-offset", "LFO Offset", "LFO Offset", -2, 2, 0, flags);
