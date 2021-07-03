@@ -111,6 +111,7 @@ static inline v4sf func_release4(const GstBtAdsr* const self, const v4ui ts) {
                 self->release_pow * V4SF_UNIT);
 }
 
+// Note: this was an experiment in branchless logic and is likely not actually faster than branch prediction!
 static inline v4sf get_value_inline4(const GstBtAdsr* const self, const v4ui ts) {
   return ab_select4(
 	func_reset4(self, ts),
@@ -287,11 +288,11 @@ void gstbt_adsr_off(GstBtAdsr* const self, const GstClockTime time) {
   self->released = TRUE;
   
   gstbt_adsr_get_value_f((GstBtPropSrateControlSource*)self, time, &self->off_level);
-  self->ts_zero_end = MIN(self->ts_zero_end, time-1);
+  self->ts_zero_end = MIN(self->ts_zero_end, time);
   self->ts_zero_end4 = (guint)((self->ts_zero_end - self->ts_trigger)/1e2L) * V4UI_UNIT;
-  self->ts_attack_end = MIN(self->ts_attack_end, time-1);
+  self->ts_attack_end = MIN(self->ts_attack_end, time);
   self->ts_attack_end4 = (guint)((self->ts_attack_end - self->ts_trigger)/1e2L) * V4UI_UNIT;
-  self->ts_decay_end = MIN(self->ts_decay_end, time-1);
+  self->ts_decay_end = MIN(self->ts_decay_end, time);
   self->ts_decay_end4 = (guint)((self->ts_decay_end - self->ts_trigger)/1e2L) * V4UI_UNIT;
   self->ts_release = time;
   self->ts_release4 = (guint)((self->ts_release - self->ts_trigger)/1e2L) * V4UI_UNIT;

@@ -678,7 +678,7 @@ static gboolean process(GstBtAudioSynth* synth, GstBuffer* gstbuf, GstMapInfo* i
   self->time_accum += (clock_end.tv_sec - clock_start.tv_sec) * 1e9L + (clock_end.tv_nsec - clock_start.tv_nsec);
   self->samples_generated += self->parent.generate_samples_per_buffer;
   if (self->samples_generated > self->parent.info.rate) {
-    GST_INFO("Avg perf: %f samples/sec\n", self->samples_generated / (self->time_accum / 1e9f));
+    GST_DEBUG("Avg perf: %f samples/sec\n", self->samples_generated / (self->time_accum / 1e9f));
     self->time_accum = 0;
     self->samples_generated = 0;
   }
