@@ -32,7 +32,7 @@
 GType
 @enum_name@_get_type (void)
 {
-  static volatile gsize g_@type@_type_id__volatile;
+  static gsize g_@type@_type_id__volatile;
 
   if (g_once_init_enter (&g_@type@_type_id__volatile))
     {

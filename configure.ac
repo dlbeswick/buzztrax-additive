@@ -1,4 +1,4 @@
-AC_PREREQ(2.69)
+AC_PREREQ([2.71])
 AC_INIT([additive],[1],[dlbeswick@gmail.com])
 
 # -O2 -g will always be added by AC_PROG_CC (or some other call?) without this line
@@ -10,9 +10,6 @@ AM_PROG_AR
 AC_CONFIG_MACRO_DIRS([m4])
 AC_CONFIG_HEADERS(config.h)
 AC_CONFIG_FILES([Makefile])
-
-REQ_GLIB=2.44.0
-REQ_GST=1.2.0
 
 # This value must match that expected by Buzztrax, so that the lib is installed in the correct location.
 GST_MAJORMINOR=1.0

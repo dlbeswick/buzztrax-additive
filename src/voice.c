@@ -176,6 +176,10 @@ void gstbt_additivev_on_buf_size_change(GstBtAdditiveV* const self, guint n_samp
 
 void gstbt_additivev_copy(GstBtAdditiveV* src, GstBtAdditiveV* dst) {
   for (guint i = 0; i < src->n_properties; ++i) {
+    // "name" is a GStreamer property, and "parented objects can't be renamed."
+    if (g_strcmp0(src->properties[i]->name, "name") == 0)
+      continue;
+    
     GValue src_v = G_VALUE_INIT;
     g_value_init(&src_v, src->properties[i]->value_type);
 

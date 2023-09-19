@@ -58,8 +58,6 @@ GST_STATIC_PAD_TEMPLATE ("src",
     );
 
 
-static gfloat lut_sin[1024];
-
 enum { MAX_OVERTONES = 600 };
 enum { MAX_VIRTUAL_VOICES = 10 };
 
@@ -381,22 +379,6 @@ static void _get_property (GObject * object, guint prop_id, GValue * value, GPar
     G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
     break;
   }
-}
-
-// Domain: [0, 683565275.5764316]
-// No performance benefit was recorded compared to fast sin.
-// LUT size doesn't seem to affect performance.
-static inline v4sf sin_ps_lut(const v4sf x) {
-  const gfloat* const lut = (const gfloat*)lut_sin;
-  const v4sf x_scale = x/F2PI * (sizeof(lut_sin) / sizeof(typeof(lut_sin)));
-  const v4ui whole = __builtin_convertvector(x_scale, v4ui);
-  const v4sf frac = x_scale - __builtin_convertvector(whole, v4sf);
-  const v4ui idxa = whole & ((sizeof(lut_sin) / sizeof(typeof(lut_sin)))-1);
-  const v4ui idxb = (idxa+1) & ((sizeof(lut_sin) / sizeof(typeof(lut_sin)))-1);
-  const v4sf a = {lut[idxa[0]], lut[idxa[1]], lut[idxa[2]], lut[idxa[3]]};
-  const v4sf b = {lut[idxb[0]], lut[idxb[1]], lut[idxb[2]], lut[idxb[3]]};
-
-  return a + (b-a) * frac;
 }
 
 static gfloat* srate_prop_buf_get(const GstBtAdditive* const self, const StateVirtualVoice* const vvoice, 
@@ -835,10 +817,6 @@ G_DIR_SEPARATOR_S "" PACKAGE "-gst" G_DIR_SEPARATOR_S "GstBtSimSyn.html");*/
 
   // Override AudioSynth's pad so that float format can be used.
   gst_element_class_add_static_pad_template (element_class, &pad_template);
-  
-  for (int i = 0; i < sizeof(lut_sin) / sizeof(typeof(lut_sin)); ++i) {
-    lut_sin[i] = (gfloat)sin(G_PI * 2 * ((double)i / (sizeof(lut_sin) / sizeof(typeof(lut_sin)))));
-  }
 
   math_test();
 }

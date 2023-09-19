@@ -240,15 +240,15 @@ static inline v4sf ldexp4f(v4sf x, v4si n) {
 }
 
 // From Cephes library
-const v4sf V4SF_DP1;
-const v4sf V4SF_DP2;
-const v4sf V4SF_DP3;
-const v4sf V4SF_SINCOF_P0;
-const v4sf V4SF_SINCOF_P1;
-const v4sf V4SF_SINCOF_P2;
-const v4sf V4SF_COSCOF_P0;
-const v4sf V4SF_COSCOF_P1;
-const v4sf V4SF_COSCOF_P2;
+extern const v4sf V4SF_DP1;
+extern const v4sf V4SF_DP2;
+extern const v4sf V4SF_DP3;
+extern const v4sf V4SF_SINCOF_P0;
+extern const v4sf V4SF_SINCOF_P1;
+extern const v4sf V4SF_SINCOF_P2;
+extern const v4sf V4SF_COSCOF_P0;
+extern const v4sf V4SF_COSCOF_P1;
+extern const v4sf V4SF_COSCOF_P2;
 
 // https://stackoverflow.com/questions/2487653/avoiding-denormal-values-in-c
 #define CSR_FLUSH_TO_ZERO         (1 << 15)
