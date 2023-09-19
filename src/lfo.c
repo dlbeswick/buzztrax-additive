@@ -249,10 +249,6 @@ gboolean gstbt_lfo_float_property_get(GObject* obj, guint prop_id, GValue* value
   return bt_properties_simple_get(((GstBtLfoFloat*)obj)->props, pspec, value);
 }
 
-static void prop_add(GstBtLfoFloat* const self, const char* name, void* const var) {
-  bt_properties_simple_add(self->props, name, var);
-}
-
 static void dispose(GObject* obj) {
   GstBtLfoFloat* self = (GstBtLfoFloat*)obj;
   g_clear_object(&self->props);
@@ -281,13 +277,13 @@ void gstbt_lfo_float_props_add(GObjectClass* const gobject_class, guint* idx) {
   g_object_class_install_property(
     gobject_class,
     (*idx)++, 
-    g_param_spec_int("lfo-voice-master", "Master Voice", "Master voice that modulates parameters",
+    g_param_spec_int("lfo-voice-master", "LFO Master", "Master voice that modulates one chosen parameter of this LFO",
                      -1, MAX_VOICES, -1, flags)
     );
   g_object_class_install_property(
     gobject_class,
     (*idx)++, 
-    g_param_spec_enum("lfo-voice-master-prop", "M-Voice Prop.", "Property of this LFO modulated by master voice",
+    g_param_spec_enum("lfo-voice-master-prop", "LFO-M Prop.", "Property of this LFO modulated by LFO voice master",
                       gstbt_lfo_float_prop_get_type(), GSTBT_LFO_FLOAT_PROP_NONE, flags)
     );
   
@@ -312,14 +308,14 @@ GstBtLfoFloat* gstbt_lfo_float_new(GObject* const owner, const guint idx_voice) 
   result->owner = owner;
   result->idx_voice = idx_voice;
   result->props = bt_properties_simple_new(owner);
-  prop_add(result, "lfo-voice-master", &result->idx_voice_master);
-  prop_add(result, "lfo-voice-master-prop", &result->voice_master_prop);
-  prop_add(result, "lfo-amplitude", &result->amplitude);
-  prop_add(result, "lfo-frequency", &result->frequency);
-  prop_add(result, "lfo-shape", &result->shape);
-  prop_add(result, "lfo-filter", &result->filter);
-  prop_add(result, "lfo-offset", &result->offset);
-  prop_add(result, "lfo-phase", &result->phase);
-  prop_add(result, "lfo-waveform", &result->waveform);
+  bt_properties_simple_add(result->props, "lfo-voice-master", &result->idx_voice_master);
+  bt_properties_simple_add(result->props, "lfo-voice-master-prop", &result->voice_master_prop);
+  bt_properties_simple_add(result->props, "lfo-amplitude", &result->amplitude);
+  bt_properties_simple_add(result->props, "lfo-frequency", &result->frequency);
+  bt_properties_simple_add(result->props, "lfo-shape", &result->shape);
+  bt_properties_simple_add(result->props, "lfo-filter", &result->filter);
+  bt_properties_simple_add(result->props, "lfo-offset", &result->offset);
+  bt_properties_simple_add(result->props, "lfo-phase", &result->phase);
+  bt_properties_simple_add(result->props, "lfo-waveform", &result->waveform);
   return result;
 }

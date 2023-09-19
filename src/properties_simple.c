@@ -70,35 +70,39 @@ gboolean bt_properties_simple_get(const BtPropertiesSimple* self, GParamSpec* ps
   return FALSE;
 }
 
+static void bt_properties_simple_set_from_gvalue(PspecVar* const pspec_var, const GValue* value) {
+  switch (pspec_var->pspec->value_type) {
+  case G_TYPE_BOOLEAN:
+    (*(gboolean*)pspec_var->var) = g_value_get_boolean(value);
+    break;
+  case G_TYPE_INT:
+    (*(gint*)pspec_var->var) = g_value_get_int(value);
+    break;
+  case G_TYPE_UINT:
+    (*(guint*)pspec_var->var) = g_value_get_uint(value);
+    break;
+  case G_TYPE_FLOAT:
+    (*(gfloat*)pspec_var->var) = g_value_get_float(value);
+    break;
+  case G_TYPE_DOUBLE:
+    (*(gdouble*)pspec_var->var) = g_value_get_double(value);
+    break;
+  default:
+    if (g_type_is_a(pspec_var->pspec->value_type, G_TYPE_ENUM))
+      (*(guint*)pspec_var->var) = g_value_get_enum(value);
+    else
+      g_assert(FALSE);
+  }
+}
+
 gboolean bt_properties_simple_set(const BtPropertiesSimple* self, GParamSpec* pspec, const GValue* value) {
   for (guint i = 0; i < self->props->len; ++i) {
-	PspecVar* const pspec_var = &g_array_index(self->props, PspecVar, i);
+    PspecVar* const pspec_var = &g_array_index(self->props, PspecVar, i);
 	
-	if (pspec_var->pspec == pspec) {
-	  switch (pspec_var->pspec->value_type) {
-	  case G_TYPE_BOOLEAN:
-		(*(gboolean*)pspec_var->var) = g_value_get_boolean(value);
-        break;
-	  case G_TYPE_INT:
-		(*(gint*)pspec_var->var) = g_value_get_int(value);
-		break;
-	  case G_TYPE_UINT:
-		(*(guint*)pspec_var->var) = g_value_get_uint(value);
-		break;
-	  case G_TYPE_FLOAT:
-		(*(gfloat*)pspec_var->var) = g_value_get_float(value);
-		break;
-	  case G_TYPE_DOUBLE:
-		(*(gdouble*)pspec_var->var) = g_value_get_double(value);
-		break;
-	  default:
-		if (g_type_is_a(pspec_var->pspec->value_type, G_TYPE_ENUM))
-		  (*(guint*)pspec_var->var) = g_value_get_enum(value);
-		else
-		  g_assert(FALSE);
-	  }
-	  return TRUE;
-	}
+    if (pspec_var->pspec == pspec) {
+      bt_properties_simple_set_from_gvalue(pspec_var, value);
+      return TRUE;
+    }
   }
   return FALSE;
 }
@@ -110,6 +114,7 @@ void bt_properties_simple_add(BtPropertiesSimple* self, const char* prop_name, v
   g_assert(pspec_var.pspec);
   
   pspec_var.var = var;
+  bt_properties_simple_set_from_gvalue(&pspec_var, g_param_spec_get_default_value(pspec_var.pspec));
   
   g_array_append_val(self->props, pspec_var);
 }
