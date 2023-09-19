@@ -23,8 +23,29 @@ G_DECLARE_FINAL_TYPE(BtPropertiesSimple, bt_properties_simple, BT, PROPERTIES_SI
 
 BtPropertiesSimple* bt_properties_simple_new(GObject* owner);
 
+/**
+ * Add a simple property definition.
+ * @prop_name: The name of a property already defined on this object's owner by a g_param_spec_* function.
+ * @var: Data from the owner whose value is retrieved and modified in the 'get' and 'set' property function.
+ *       The data must have an underlying type suitable for the type defined by the property.
+ */
 void bt_properties_simple_add(BtPropertiesSimple* self, const char* prop_name, void* var);
 
+/**
+ * Get a simple property's underlying data and store it in a GValue.
+ * This method is intended to be called inside the GObject get_property signal handler.
+ * Note that GObjects may have some properties managed by BtPropertiesSimple, while others may not be.
+ *
+ * Returns: TRUE if this BtPropertiesSimple instance manages the given GParamSpec and "value" was modified.
+ */
 gboolean bt_properties_simple_get(const BtPropertiesSimple* self, GParamSpec* pspec, GValue* value);
+
+/**
+ * Set a simple property's underlying data from a GValue.
+ * This method is intended to be called inside the GObject set_property signal handler.
+ * Note that GObjects may have some properties managed by BtPropertiesSimple, while others may not be.
+ *
+ * Returns: TRUE if this BtPropertiesSimple instance manages the given GParamSpec and the data was set.
+ */
 gboolean bt_properties_simple_set(const BtPropertiesSimple* self, GParamSpec* pspec, const GValue* value);
 

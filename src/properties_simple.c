@@ -39,33 +39,33 @@ typedef struct {
 
 gboolean bt_properties_simple_get(const BtPropertiesSimple* self, GParamSpec* pspec, GValue* value) {
   for (guint i = 0; i < self->props->len; ++i) {
-	PspecVar* const pspec_var = &g_array_index(self->props, PspecVar, i);
+    PspecVar* const pspec_var = &g_array_index(self->props, PspecVar, i);
 	
-	if (pspec_var->pspec->name == pspec->name) {
-	  switch (pspec_var->pspec->value_type) {
-	  case G_TYPE_BOOLEAN:
-		g_value_set_boolean(value, *(gboolean*)pspec_var->var);
-		break;
-	  case G_TYPE_INT:
-		g_value_set_int(value, *(gint*)pspec_var->var);
-		break;
-	  case G_TYPE_UINT:
-		g_value_set_uint(value, *(guint*)pspec_var->var);
-		break;
-	  case G_TYPE_FLOAT:
-		g_value_set_float(value, *(gfloat*)pspec_var->var);
-		break;
-	  case G_TYPE_DOUBLE:
-		g_value_set_double(value, *(gdouble*)pspec_var->var);
-		break;
-	  default:
-		if (g_type_is_a(pspec_var->pspec->value_type, G_TYPE_ENUM))
-		  g_value_set_enum(value, *(guint*)pspec_var->var);
-		else
-		  g_assert(FALSE);
-	  }
-	  return TRUE;
-	}
+    if (pspec_var->pspec->name == pspec->name) {
+      switch (pspec_var->pspec->value_type) {
+      case G_TYPE_BOOLEAN:
+        g_value_set_boolean(value, *(gboolean*)pspec_var->var);
+        break;
+      case G_TYPE_INT:
+        g_value_set_int(value, *(gint*)pspec_var->var);
+        break;
+      case G_TYPE_UINT:
+        g_value_set_uint(value, *(guint*)pspec_var->var);
+        break;
+      case G_TYPE_FLOAT:
+        g_value_set_float(value, *(gfloat*)pspec_var->var);
+        break;
+      case G_TYPE_DOUBLE:
+        g_value_set_double(value, *(gdouble*)pspec_var->var);
+        break;
+      default:
+        if (g_type_is_a(pspec_var->pspec->value_type, G_TYPE_ENUM))
+          g_value_set_enum(value, *(guint*)pspec_var->var);
+        else
+          g_assert(FALSE);
+      }
+      return TRUE;
+    }
   }
   return FALSE;
 }
@@ -106,7 +106,7 @@ gboolean bt_properties_simple_set(const BtPropertiesSimple* self, GParamSpec* ps
   }
   return FALSE;
 }
-	
+
 void bt_properties_simple_add(BtPropertiesSimple* self, const char* prop_name, void* var) {
   PspecVar pspec_var;
 

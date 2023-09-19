@@ -19,23 +19,35 @@
 #pragma once
 
 #include "src/voice.h"
-#include "src/propsratecontrolsource.h"
 
-/*
-  An LFO source that produces floating-point values.
-
-  It operates using an accumulator mode will produce a different result to the function mode when parameters are changed
-  during its operation as the output will basically be the integration of all the changes over time, rather than the
-  result given the current parameters. This can be useful when modulating the LFO's own parameters, but it's not
-  possible to get the output as a given time as it is with the control source approach.
-*/
+/**
+ * An LFO source that produces floating-point values.
+ *
+ * It operates using an accumulator mode that will produce a different result to the function mode when parameters are
+ * changed during its operation. The output will be the integration of all the changes over time, rather than the
+ * result given the current parameters. This can be useful when modulating the LFO's own parameters as it tends to
+ * produce a "smoother" and more intuitive result, but on the other hand it's not possible to get the output at a given
+ * time as it is with the control source approach.
+ */
 G_DECLARE_FINAL_TYPE(GstBtLfoFloat, gstbt_lfo_float, GSTBT, LFO_FLOAT, GObject);
 
 GstBtLfoFloat* gstbt_lfo_float_new(GObject* owner, guint idx_voice);
 
+/**
+ * The LFO needs a buffer of "s-rate" samples that will be used to modulate sound output, and/or other LFO outputs.
+ * The size of this buffer will generally need to match the size of the buffer used for the sound output that the LFO
+ * is modulating. It should be called before using the LFO and any time the main sound output buffer size changes.
+ */ 
 void gstbt_lfo_float_on_buf_size_change(GstBtLfoFloat* self, guint n_samples);
 
+/**
+ * Can be used to add the LFO class properties to another class.
+ */
 void gstbt_lfo_float_props_add(GObjectClass* const klass, guint* idx);
+
+/**
+ * These are intended to be called from the owning object's set/get_property signal handlers.
+ */
 gboolean gstbt_lfo_float_property_set(GObject* obj, guint prop_id, const GValue* value, GParamSpec* pspec);
 gboolean gstbt_lfo_float_property_get(GObject* obj, guint prop_id, GValue* value, GParamSpec* pspec);
 
